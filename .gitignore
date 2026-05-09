@@ -1,0 +1,69 @@
+# Backups and temporary files
+.backup-*/
+*.backup
+*.tmp
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Node/Frontend
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Old/Deprecated structure (keeping for reference only in backup)
+Recommendation-engine-catalog/
+.backup-*/
+
+# Git
+.git/
+.gitkeep
+
+# Embedded repositories (separate projects)
+Recommendation-engine/
+finops-agents/

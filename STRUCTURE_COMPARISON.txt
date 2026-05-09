@@ -1,0 +1,289 @@
+================================================================================
+                    PROJECT STRUCTURE COMPARISON
+                          BEFORE vs AFTER
+================================================================================
+
+BEFORE: Non-Standard (Everything nested in Recommendation-engine/)
+────────────────────────────────────────────────────────────────────────────────
+
+FinOps/
+└── Recommendation-engine/
+    ├── backend/
+    │   ├── app/
+    │   │   ├── __init__.py
+    │   │   ├── main.py              ← MAIN APP
+    │   │   ├── models.py
+    │   │   ├── database.py
+    │   │   ├── schemas.py
+    │   │   ├── settings.py
+    │   │   ├── routes_cost.py       ← ROUTES SCATTERED
+    │   │   ├── routes_aws.py
+    │   │   ├── routes_azure.py
+    │   │   ├── routes_gcp.py
+    │   │   ├── jobs.py              ← JOBS UNORGANIZED
+    │   │   ├── azure_jobs.py
+    │   │   ├── gcp_jobs.py
+    │   │   ├── connectors.py        ← CONNECTORS FLAT
+    │   │   ├── evaluator.py         ← SERVICES FLAT
+    │   │   ├── recommendations.py
+    │   │   ├── seed.py              ← SEED SCATTERED
+    │   │   ├── seed_cost_mappings.py
+    │   │   └── ...
+    │   ├── requirements.txt
+    │   └── Dockerfile
+    ├── frontend/
+    │   ├── src/
+    │   │   ├── pages/
+    │   │   │   ├── CostDashboards.jsx
+    │   │   │   └── AdminCostSetup.jsx
+    │   │   ├── api.ts
+    │   │   └── ...
+    │   ├── package.json
+    │   └── ...
+    └── config/
+        └── schedules.yaml
+
+ISSUES WITH BEFORE:
+  ❌ Difficult to find related code (routes scattered as separate files)
+  ❌ No clear separation between API versions
+  ❌ Jobs unorganized (not grouped by CSP)
+  ❌ Services mixed with main app code
+  ❌ Difficult to add new CSPs (where does new code go?)
+  ❌ Not production-ready structure
+  ❌ Hard to scale with team size
+  ❌ Not Docker/Kubernetes standard
+
+================================================================================
+
+AFTER: Enterprise-Standard Architecture
+────────────────────────────────────────────────────────────────────────────────
+
+FinOps/
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py                      ← MAIN APP (UPDATED IMPORTS)
+│   │   ├── models.py
+│   │   ├── database.py
+│   │   ├── schemas.py
+│   │   ├── settings.py
+│   │   │
+│   │   ├── api/                          ← API ROUTES ORGANIZED
+│   │   │   ├── __init__.py
+│   │   │   └── v1/                       ← VERSIONED API
+│   │   │       ├── __init__.py           ← Router aggregation
+│   │   │       ├── cost/
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── routes.py         ← Cost endpoints
+│   │   │       ├── aws/
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── routes.py         ← AWS configuration
+│   │   │       ├── azure/
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── routes.py         ← Azure configuration
+│   │   │       ├── gcp/
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── routes.py         ← GCP configuration
+│   │   │       ├── users/
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── routes.py         ← User mgmt (ready)
+│   │   │       ├── health/
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── routes.py         ← Health check (ready)
+│   │   │       └── ...
+│   │   │
+│   │   ├── jobs/                         ← JOBS ORGANIZED BY CSP
+│   │   │   ├── __init__.py
+│   │   │   ├── scheduler.py              ← Main orchestrator
+│   │   │   ├── aws/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── ...                   ← AWS jobs (ready)
+│   │   │   ├── azure/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── azure_jobs.py         ← Azure ingestion
+│   │   │   ├── gcp/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── gcp_jobs.py           ← GCP ingestion
+│   │   │   ├── shared/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── ...                   ← Shared utilities
+│   │   │   └── ...
+│   │   │
+│   │   ├── services/                     ← BUSINESS LOGIC
+│   │   │   ├── __init__.py
+│   │   │   ├── evaluator.py              ← Hypothesis evaluation
+│   │   │   └── recommendation_service.py ← Catalog import
+│   │   │
+│   │   ├── connectors/                   ← CLOUD INTEGRATIONS
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py                   ← Base connector
+│   │   │   ├── aws/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── ...
+│   │   │   ├── azure/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── ...
+│   │   │   └── gcp/
+│   │   │       ├── __init__.py
+│   │   │       └── ...
+│   │   │
+│   │   ├── seed/                         ← SEED DATA
+│   │   │   ├── __init__.py
+│   │   │   ├── seed_data.py
+│   │   │   └── mappings/
+│   │   │       ├── __init__.py
+│   │   │       ├── service_mappings.py   ← AWS/Azure/GCP categories
+│   │   │       └── ...
+│   │   │
+│   │   ├── middleware/                   ← AUTH, LOGGING, etc.
+│   │   │   ├── __init__.py
+│   │   │   └── ...
+│   │   │
+│   │   ├── utils/                        ← SHARED UTILITIES
+│   │   │   ├── __init__.py
+│   │   │   └── ...
+│   │   │
+│   │   └── tests/                        ← TESTS
+│   │       ├── __init__.py
+│   │       ├── unit/
+│   │       ├── integration/
+│   │       └── fixtures/
+│   │
+│   ├── migrations/                       ← DATABASE MIGRATIONS
+│   │   └── versions/
+│   │
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── README.md
+│
+├── frontend/                             ← REACT UI
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Dashboard/
+│   │   │   │   ├── Executive/
+│   │   │   │   ├── Finance/
+│   │   │   │   ├── FinOps/
+│   │   │   │   ├── Team/
+│   │   │   │   ├── Cloud/
+│   │   │   │   ├── Focus/
+│   │   │   │   └── AI/
+│   │   │   ├── Admin/
+│   │   │   │   ├── CostSetup/
+│   │   │   │   ├── UserManagement/
+│   │   │   │   └── BudgetManagement/
+│   │   │   └── Common/
+│   │   ├── services/
+│   │   ├── hooks/
+│   │   ├── types/
+│   │   └── styles/
+│   ├── package.json
+│   └── Dockerfile
+│
+├── infrastructure/                       ← DEVOPS
+│   ├── docker-compose.yml
+│   ├── kubernetes/
+│   │   └── RBAC/
+│   ├── terraform/
+│   │   ├── aws/
+│   │   ├── azure/
+│   │   └── gcp/
+│   └── scripts/
+│
+├── docs/                                 ← DOCUMENTATION
+│   ├── architecture/
+│   ├── api/
+│   ├── setup/
+│   ├── guides/
+│   └── operations/
+│
+├── scripts/                              ← BUILD & DEPLOY
+│   └── ...
+│
+└── config/                               ← CONFIG FILES
+    └── schedules.yaml
+
+BENEFITS OF AFTER:
+  ✅ Clear separation of concerns
+  ✅ API routes organized by resource
+  ✅ Jobs organized by cloud provider
+  ✅ Easy to add new CSPs (follow pattern)
+  ✅ Services layer clear and testable
+  ✅ Enterprise-standard structure
+  ✅ Docker & Kubernetes ready
+  ✅ Scalable with growing team
+  ✅ Clear dependency graph
+  ✅ Industry best practices
+  ✅ CI/CD pipeline friendly
+  ✅ Multi-tenant ready
+
+================================================================================
+
+KEY STRUCTURAL CHANGES:
+────────────────────────────────────────────────────────────────────────────────
+
+1. ROUTES ORGANIZATION
+   Before: routes_cost.py, routes_aws.py, routes_azure.py, routes_gcp.py (flat)
+   After:  api/v1/{cost,aws,azure,gcp}/routes.py (organized by resource)
+
+2. JOBS ORGANIZATION
+   Before: jobs.py, azure_jobs.py, gcp_jobs.py (flat)
+   After:  jobs/{scheduler.py,aws/,azure/,gcp/,shared/} (organized by CSP)
+
+3. API VERSIONING
+   Before: /api/cost, /api/ingest-config (unversioned)
+   After:  /api/v1/cost, /api/v1/aws/ingest-config (versioned)
+
+4. SERVICES LAYER
+   Before: evaluator.py, recommendations.py in root
+   After:  services/{evaluator.py,recommendation_service.py} (organized)
+
+5. SEED DATA
+   Before: seed.py, seed_cost_mappings.py (scattered)
+   After:  seed/{seed_data.py,mappings/service_mappings.py} (organized)
+
+6. ROOT DIRECTORIES
+   Before: Recommendation-engine/backend, Recommendation-engine/frontend
+   After:  backend/, frontend/, infrastructure/, docs/ (standard layout)
+
+================================================================================
+
+IMPORT MIGRATION EXAMPLES:
+────────────────────────────────────────────────────────────────────────────────
+
+OLD IMPORTS                           NEW IMPORTS
+─────────────────────────────────────────────────────────────────────────────
+from routes_cost import router        from app.api.v1 import get_api_router
+from jobs import start_scheduler      from app.jobs.scheduler import start_scheduler
+from evaluator import eval_hyp        from app.services.evaluator import eval_hyp
+from recommendations import import    from app.services.recommendation_service import import
+from connectors import connector_for  from app.connectors.base import connector_for
+from seed import seed_all             from app.seed.seed_data import seed_all
+from database import SessionLocal      from app.database import SessionLocal
+from models import CostDetail         from app.models import CostDetail
+
+================================================================================
+
+DEPLOYMENT CHECKLIST:
+────────────────────────────────────────────────────────────────────────────────
+
+[✅] Backend directory structure created
+[✅] Frontend directory structure created  
+[✅] Infrastructure directory created
+[✅] Docs directory organized
+[✅] All Python files moved to new locations
+[✅] All imports updated to new paths
+[✅] API v1 router initialization created
+[✅] __init__.py files created for all packages
+[✅] Python syntax verified (py_compile)
+[✅] Backup created (.backup-1778327700)
+
+Ready to:
+[  ] Install dependencies: pip install -r backend/requirements.txt
+[  ] Run tests: python -m pytest backend/tests/ -v
+[  ] Start app: python -m app.main
+[  ] Deploy to Docker: docker-compose up
+[  ] Deploy to Kubernetes: kubectl apply -f infrastructure/kubernetes/
+[  ] Commit to git: git add -A && git commit -m "refactor: enterprise structure"
+[  ] Delete old folder: rm -rf Recommendation-engine/
+
+================================================================================
