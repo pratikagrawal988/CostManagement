@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: finops
+      POSTGRES_PASSWORD: finops
+      POSTGRES_DB: finops_recommendations
+    ports:
+      - "5544:5432"
+    volumes:
+      - recommendation_db:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finops -d finops_recommendations"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://finops:finops@db:5432/finops_recommendations}
+      CATALOG_PATH: /app/config/recommendations/basic-recommendation-catalog-global.csv
+    volumes:
+      - ./config:/app/config:ro
+    ports:
+      - "8088:8088"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_BASE_URL: http://127.0.0.1:8088
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+
+volumes:
+  recommendation_db:

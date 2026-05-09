@@ -1,0 +1,168 @@
+providers:
+  - provider_id: aws
+    name: Amazon Web Services
+    category: csp
+    auth: iam_role
+    env:
+      - AWS_ROLE_ARN
+      - AWS_EXTERNAL_ID
+    scopes: [account_id, region_allowlist]
+    signals:
+      - compute.vm.cpu_utilisation_pct
+      - compute.vm.network_egress_bytes
+      - storage.volume.iops
+      - billing.resource.cost
+    recommendation_imports:
+      - compute_optimizer
+      - cost_optimization_hub
+      - trusted_advisor
+    health_probe: sts_get_caller_identity
+    refresh_intervals:
+      metrics: 5m
+      billing: 24h
+      native_recommendations: 12h
+      pricing: 24h
+    setup_steps:
+      - Create cross-account read-only IAM role.
+      - Enable CUR to S3 and Compute Optimizer.
+      - Grant CloudWatch, Cost Explorer, Pricing, and CUR read permissions.
+
+  - provider_id: azure
+    name: Microsoft Azure
+    category: csp
+    auth: service_principal
+    env: [AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET]
+    scopes: [subscription_ids, management_group_id, region_allowlist]
+    signals:
+      - compute.vm.cpu_utilisation_pct
+      - compute.vm.network_egress_bytes
+      - billing.resource.cost
+    recommendation_imports: [azure_advisor]
+    health_probe: resource_graph_query
+    refresh_intervals:
+      metrics: 5m
+      billing: 24h
+      native_recommendations: 12h
+      pricing: 24h
+    setup_steps:
+      - Register an app with Reader, Monitoring Reader, Cost Management Reader, and Advisor Reader.
+      - Configure Cost Export to Storage.
+      - Validate Retail Prices API mapping for selected regions.
+
+  - provider_id: gcp
+    name: Google Cloud
+    category: csp
+    auth: service_account_or_wif
+    env: [GCP_PROJECT_IDS, GCP_SERVICE_ACCOUNT_JSON]
+    scopes: [project_ids, folder_ids, org_id]
+    signals:
+      - compute.vm.cpu_utilisation_pct
+      - compute.vm.network_egress_bytes
+      - billing.resource.cost
+    recommendation_imports: [google_recommender]
+    health_probe: cloud_asset_search
+    refresh_intervals:
+      metrics: 5m
+      billing: 24h
+      native_recommendations: 12h
+      pricing: 24h
+    setup_steps:
+      - Enable Recommender, Monitoring, Asset Inventory, and Billing Export.
+      - Grant viewer access to monitored projects and billing export dataset.
+
+  - provider_id: kubecost
+    name: Kubecost / OpenCost
+    category: k8s
+    auth: api_token
+    env: [KUBECOST_BASE_URL, KUBECOST_API_KEY]
+    scopes: [cluster_ids, namespace_labels]
+    signals:
+      - k8s.pod.cpu_request_utilisation_pct
+      - k8s.pod.memory_request_utilisation_pct
+      - billing.resource.cost
+    recommendation_imports: [allocation, request_sizing, idle_namespace]
+    health_probe: allocation_api
+    refresh_intervals:
+      metrics: 15m
+      billing: 24h
+      native_recommendations: 12h
+
+  - provider_id: datadog
+    name: Datadog
+    category: saas
+    auth: api_app_key
+    env: [DATADOG_API_KEY, DATADOG_APP_KEY]
+    scopes: [site, cloud_accounts]
+    signals:
+      - observability.metric.cardinality
+      - k8s.pod.cpu_request_utilisation_pct
+      - billing.resource.cost
+    recommendation_imports: [cloud_cost, k8s_waste, custom_metrics]
+    health_probe: validate_api_key
+    refresh_intervals:
+      metrics: 15m
+      native_recommendations: 24h
+
+  - provider_id: litellm
+    name: LiteLLM / AI Gateway
+    category: ai_telemetry
+    auth: api_token
+    env: [LITELLM_API_KEY]
+    scopes: [projects, teams]
+    signals:
+      - ai.llm.prompt_tokens
+      - ai.llm.completion_tokens
+      - ai.llm.cache_hit_pct
+      - ai.llm.request_cost
+    recommendation_imports: [model_route, cache_enablement]
+    health_probe: usage_summary
+    refresh_intervals:
+      metrics: 5m
+
+  - provider_id: jira
+    name: Jira
+    category: itsm
+    auth: api_token
+    env: [JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN]
+    scopes: [project_key, issue_type]
+    signals: []
+    recommendation_imports: []
+    health_probe: myself
+    refresh_intervals:
+      delivery_status: 15m
+
+  - provider_id: servicenow
+    name: ServiceNow
+    category: itsm
+    auth: basic_or_oauth
+    env: [SERVICENOW_BASE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD]
+    scopes: [assignment_group, catalog_item]
+    signals: []
+    recommendation_imports: []
+    health_probe: table_api
+    refresh_intervals:
+      delivery_status: 15m
+
+  - provider_id: slack
+    name: Slack
+    category: notification
+    auth: webhook
+    env: [SLACK_WEBHOOK_URL]
+    scopes: [channels]
+    signals: []
+    recommendation_imports: []
+    health_probe: webhook_post
+    refresh_intervals:
+      delivery_status: 15m
+
+  - provider_id: teams
+    name: Microsoft Teams
+    category: notification
+    auth: webhook
+    env: [TEAMS_WEBHOOK_URL]
+    scopes: [channels]
+    signals: []
+    recommendation_imports: []
+    health_probe: webhook_post
+    refresh_intervals:
+      delivery_status: 15m

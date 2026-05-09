@@ -1,0 +1,13 @@
+provider,resource_type,sku,region,pricing_model,unit,rate,compatibility_group,attributes
+AWS,vm,m6i.large,us-east-1,on_demand,hour,0.096,compute.vm.same-architecture-family,"vcpu=2;memory_gib=8;family=m6i"
+AWS,vm,m6i.medium,us-east-1,on_demand,hour,0.048,compute.vm.same-architecture-family,"vcpu=1;memory_gib=4;family=m6i"
+AWS,vm,t3.medium,us-east-1,on_demand,hour,0.0416,compute.vm.same-architecture-family,"vcpu=2;memory_gib=4;family=t3"
+AWS,ebs,gp3,us-east-1,on_demand,gb_month,0.08,storage.block.same-volume-performance-family,"iops=3000;throughput=125"
+AWS,s3,standard,us-east-1,on_demand,gb_month,0.023,storage.object.same-bucket-storage-class-policy,"tier=hot"
+AWS,s3,standard_ia,us-east-1,on_demand,gb_month,0.0125,storage.object.same-bucket-storage-class-policy,"tier=warm"
+Azure,vm,Standard_D2s_v5,eastus,on_demand,hour,0.096,compute.vm.same-architecture-family,"vcpu=2;memory_gib=8;family=dsv5"
+Azure,vm,Standard_D2as_v5,eastus,on_demand,hour,0.086,compute.vm.same-architecture-family,"vcpu=2;memory_gib=8;family=dasv5"
+Azure,disk,Premium_SSD_P10,eastus,on_demand,month,19.71,storage.block.same-volume-performance-family,"size_gib=128"
+GCP,vm,n2-standard-2,us-central1,on_demand,hour,0.097,compute.vm.same-architecture-family,"vcpu=2;memory_gib=8;family=n2"
+GCP,vm,e2-standard-2,us-central1,on_demand,hour,0.067,compute.vm.same-architecture-family,"vcpu=2;memory_gib=8;family=e2"
+GCP,storage,nearline,us-central1,on_demand,gb_month,0.01,storage.object.same-bucket-storage-class-policy,"tier=warm"

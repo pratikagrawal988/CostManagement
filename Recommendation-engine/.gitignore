@@ -1,0 +1,58 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+secrets/
+.vault
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+
+# Node/Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+.vite/
+.next/
+.nuxt/
+.cache/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+postgres_data/
+data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+.dockerignore
+
+# Logs
+logs/
+*.log
+
+# OS
+Thumbs.db

@@ -1,0 +1,11 @@
+policy_id,policy_name,policy_type,description,applies_to_categories,reduces_cost,implementation_notes,status
+POL001,Idle VM Auto-Stop,Preventive,Automatically stop VMs that meet idle criteria after grace period.,Compute; Virtual Machine,Yes,Tag-based or scope-based; integrate with action point grace period.,Design / Reference
+POL002,Unattached Disk Deletion Window,Preventive,Delete disks unattached for more than N days unless exempt by tag.,Storage; Disk,Yes,Requires approval workflow or auto-delete after escalation.,Design / Reference
+POL003,Snapshot Retention Cap,Preventive,Enforce max retention days for snapshots; archive or delete beyond.,Storage; Snapshots & Images,Yes,Policy engine checks age and dependency before delete.,Design / Reference
+POL004,RI Coverage Target,Detective,Alert when RI/SP coverage drops below target for eligible workload.,Compute; Virtual Machine,Yes,Dashboard and report; no auto-purchase.,Design / Reference
+POL005,Right-Sizing Mandate,Corrective,Require rightsizing for VMs with utilization below threshold for 30 days.,Compute; Virtual Machine,Yes,Action point + escalation to L1/L2 per Cost Advisory flow.,Design / Reference
+POL006,Approved Instance Types Only,Preventive,Allow only approved instance types/sizes per environment.,Compute; Virtual Machine,Yes,Policy enforced at provision time (Azure Policy, AWS SCSP, etc.).,Design / Reference
+POL007,Tag Compliance for Cost Allocation,Detective,Report resources missing required tags for cost allocation.,All,Indirect,Enables showback/chargeback; supports cleanup of untagged.,Design / Reference
+POL008,Unused IP Reclamation,Corrective,Reclaim static IPs not associated with running resources after 7 days.,Network; IP,Yes,Automation or action item to release IP.,Design / Reference
+POL009,Database Tier Downgrade Review,Corrective,Quarterly review of DB tiers for downgrade based on usage.,Database; Database,Yes,Link to Idle DB and rightsizing recommendations.,Design / Reference
+POL010,Container Resource Limits Policy,Preventive,Set max request/limit ratios to avoid over-provisioning in Kubernetes.,Container; Container,Yes,Admission controller or quota policy.,Design / Reference

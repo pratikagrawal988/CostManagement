@@ -1,0 +1,506 @@
+AI Cost Variables  +  Tooling Framework
+Infrastructure to Application  ·  7 Layers  ·  40+ Variables  ·  Open-Source & Commercial Tool Map
+Every cost driver defined, its optimisation opportunity stated, the exact telemetry needed to detect it, and the recommended open-source or commercial tool to capture and act on it.
+How to read this document:  Each cost variable table has 5 columns: (1) Cost Variable — name and layer. (2) Definition — what it is. (3) ⚡ Cost Driver / ✓ Optimisation Opportunity. (4) Telemetry Required — exact metric names and sources. (5) Recommended Tooling — open-source (OSS) and commercial tools that provide this signal or enable the optimisation. The Tooling Chapter at the end maps every tool across layers with build-vs-buy guidance.
+Layer 1  ·  GPU & Compute  —  Idle · Utilisation · MIG · CPU stall · Spot waste
+Cost Variable
+Definition
+Driver  →  Opportunity
+Telemetry  (metric / source)
+Tooling
+GPU Idle Time
+GPU provisioned and powered on but running no compute — training cluster idle between jobs.
+⚡ Full hourly GPU rate billed even at 0% utilisation; idle clusters are the #1 GPU waste pattern
+✓ Detect idle >10 min → scale-down or spot reclaim; separate reservation vs on-demand
+• dcgm_gpu_utilization (per GPU)
+• cloud billing instance start/stop events
+• job queue depth (Slurm/K8s scheduler)
+◆ NVIDIA DCGM + Prometheus + Grafana
+◆ KEDA (event-driven scale-to-zero)
+● run:ai (idle detection + auto-reclaim)
+● Spot.io (idle GPU spot orchestration)
+GPU Utilisation Rate
+% of GPU SM cycles executing real matrix operations — the core efficiency metric for any GPU workload.
+⚡ Training at 30–50% SM utilisation wastes 50–70% of GPU cost per hour
+✓ Tune batch size, enable tensor parallelism, Flash Attention; every +10% util = -10% cost
+• dcgm_gpu_sm_utilization (%)
+• dcgm_gpu_fp16/tensor_active
+• NVIDIA Nsight Systems kernel trace
+◆ DCGM Exporter + Prometheus
+◆ PyTorch Profiler / NVIDIA Nsight
+● Weights & Biases (training efficiency tracking)
+GPU Memory Utilisation
+Fraction of GPU HBM in active use — determines whether a smaller GPU tier is sufficient.
+⚡ A100 80GB billed when model fits in L4 24GB; 3× unnecessary cost
+✓ Quantise model (FP16→INT8/INT4); MIG slicing; right-size GPU tier per workload
+• dcgm_gpu_mem_used/total_bytes
+• peak memory watermark per training step
+• OOM kill events from kubelet
+◆ DCGM + kube-state-metrics
+◆ bitsandbytes / GPTQ (quantisation)
+● NVIDIA NIM (optimised model serving)
+GPU MIG Efficiency
+Utilisation of each MIG slice vs cost of the full physical GPU it is carved from.
+⚡ Small inference workload using full A100 when 1g.10gb MIG slice suffices; 6/7 wasted
+✓ Profile concurrency + memory per service; right-size to appropriate MIG instance type
+• DCGM per-MIG-instance metrics
+• request rate per MIG slice vs capacity
+• GPU Operator CRD MIG config
+◆ NVIDIA GPU Operator (MIG manager)
+◆ DCGM Exporter (MIG metrics)
+● run:ai (MIG-aware scheduling)
+CPU–GPU Stall
+CPU-bound data loading that starves the GPU — GPU waits idle while CPU prepares the next batch.
+⚡ GPU idles while CPU dataloaders run; both GPU and CPU billed at full rate for wasted time
+✓ Use NVIDIA DALI (GPU-native data pipeline), async prefetch, increase DataLoader workers
+• GPU compute stall ratio (dcgm_gpu_active vs queue depth)
+• CPU iowait time per worker node
+• Dataloader throughput (samples/sec) vs GPU throughput
+◆ NVIDIA DALI
+◆ Prometheus node_exporter (CPU I/O wait)
+◆ PyTorch Profiler (stall breakdown)
+Spot Preemption Waste
+Cost of incomplete GPU work when spot instances are reclaimed — full re-run from last checkpoint.
+⚡ No checkpointing → 100% rework cost on preemption; at $10/hr × 8h = $80 wasted per preemption
+✓ Optimal checkpoint interval (checkpoint I/O cost vs expected rework cost formula)
+• Spot interruption events (cloud metadata API)
+• Gap: last checkpoint ts vs interruption ts
+• Checkpoint write duration + storage cost
+◆ FaultTolerance (torchft) / PyTorch Elastic
+◆ Slurm preemption hooks
+● Spot.io / AWS Spot Fleet with custom interruption handler
+Layer 2  ·  Memory & Storage  —  Checkpoints · Dataset I/O · Model weights · Vector DB · KV Cache
+Cost Variable
+Definition
+Driver  →  Opportunity
+Telemetry  (metric / source)
+Tooling
+Model Checkpoint Storage
+Disk cost of saving model state — full checkpoints of large models are very expensive at scale.
+⚡ 70B model = ~140GB/checkpoint; 10 checkpoints/run × 50 runs = 70TB storage
+✓ Incremental/delta checkpoints; keep last-N policy; auto-tier to cold storage after 48h
+• Checkpoint file count, size, frequency (S3 object metadata)
+• Storage cost/GB/month by tier
+• Orphaned checkpoints (no active run in experiment tracker)
+◆ MLflow / DVC (checkpoint tracking)
+◆ rclone + S3 lifecycle policies
+● Weights & Biases Artifacts (lifecycle management)
+Training Dataset I/O
+Cost of reading training data into GPU memory — S3/GCS reads billed per GB + egress.
+⚡ Cold S3 reads at $0.09/GB egress; repeated reads per epoch without caching
+✓ Cache hot datasets on local NVMe; streaming with shuffle buffer; async prefetch
+• S3/GCS request metrics (GET requests × size)
+• Dataset read throughput vs GPU memory bandwidth
+• Cache hit rate on NVMe cache
+◆ Mosaic StreamingDataset / NVIDIA DALI
+◆ MinIO (on-prem S3 cache layer)
+● Weka.io / VAST Data (parallel AI storage)
+Model Weight Storage
+Persistent storage of model weights, fine-tuned adapters, quantised variants and shadow copies.
+⚡ Multiple copies of same base model in FP32/FP16/INT8 stored redundantly across teams
+✓ Central model registry; store LoRA adapters only (<1% of full model size); auto-expire stale versions
+• Model registry version count + last-accessed ts
+• Format per version (FP32/FP16/INT8)
+• Storage cost per model family
+◆ MLflow Model Registry
+◆ Hugging Face Hub (self-hosted)
+● Weights & Biases Registry
+● NVIDIA NGC Private Registry
+Vector DB Cost
+Storage and compute for embedding vectors, metadata, and similarity index maintenance.
+⚡ Re-embedding unchanged documents on every pipeline run; full index rebuilds are expensive
+✓ Hash-based embedding dedup; incremental index update; hot/cold index tiering
+• Embedding API call count + token volume
+• Vector DB index size over time
+• Cache hit rate on embedding lookups
+◆ Qdrant / Weaviate / Chroma (self-hosted)
+◆ Redis (semantic cache layer)
+● Pinecone / Zilliz Cloud
+● NVIDIA cuVS (GPU-accelerated vector search)
+KV Cache Efficiency
+Reuse of computed key-value attention tensors — low hit rate means recomputing context every request.
+⚡ 0% KV cache hit = full context recomputed every request; multiplies GPU cost per token linearly
+✓ Prefix caching for shared system prompts; RadixAttention (SGLang); increase KV cache allocation
+• KV cache hit rate % (vLLM/TGI metrics)
+• Tokens recomputed per request
+• GPU memory: KV cache vs model weights split
+◆ vLLM (prefix caching built-in)
+◆ SGLang (RadixAttention)
+● NVIDIA NIM (optimised KV management)
+Redundant Data Copies
+Multiple copies of the same dataset or artifact stored across teams, environments and regions.
+⚡ Each team copies shared datasets to own bucket; same 10TB dataset copied 5× = $1,500/month waste
+✓ Central dataset registry with access control; content-hash dedup audit; shared read-only data lake
+• Cross-account S3 bucket content hash scan
+• Data transfer logs (same hash moved between buckets)
+• Storage billing per team/project tag
+◆ DVC (dataset version control + dedup)
+◆ Apache Iceberg (shared data lake with access control)
+● Databricks Unity Catalog / AWS Lake Formation
+Layer 3  ·  Network  —  Egress · InfiniBand · NVLink · API retries · Service mesh
+Cost Variable
+Definition
+Driver  →  Opportunity
+Telemetry  (metric / source)
+Tooling
+Egress Costs
+Cloud charges for data transferred out of a region — amplified by large model outputs and cross-region training data.
+⚡ Inference responses to users in different regions; training data pulled cross-region
+✓ Serve inference from nearest region; compress responses; CDN for repeated outputs
+• Cloud billing export (region-pair transfer volume + cost)
+• Response payload size per endpoint
+• Cross-region vs same-region transfer ratio
+◆ Infracost (cloud cost estimation in CI/CD)
+◆ Envoy (response compression middleware)
+● Cloudflare Workers AI (edge inference)
+● AWS CloudFront / GCP CDN
+InfiniBand / RDMA Efficiency
+Utilisation of high-speed GPU interconnect during distributed training all-reduce operations.
+⚡ Unbalanced all-reduce or misconfigured NCCL wastes IB bandwidth and stalls training
+✓ Profile NCCL collectives; tune chunk size + algorithm; ensure jobs on same IB rail
+• NCCL profiling output (all-reduce bandwidth per step)
+• IB port counters via UFM (Tx/Rx bytes, errors)
+• GPU wait time on collectives (dcgm_nvlink_bandwidth)
+◆ NCCL + NCCL Tests
+◆ NVIDIA UFM (InfiniBand Fabric Manager)
+◆ Prometheus IB Exporter
+● NVIDIA Quantum-2 InfiniBand ecosystem
+NVLink Fabric Efficiency
+GPU-to-GPU NVLink bandwidth consumed during tensor and pipeline parallelism within a node.
+⚡ Wrong parallelism degree saturates or underuses NVLink; slows training, wastes GPU time
+✓ Profile NVLink bandwidth vs TP/PP degree; find optimal parallelism split for model + GPU count
+• dcgm_nvlink_bandwidth_tx/rx per GPU
+• NVLink error counts (correctable/uncorrectable)
+• Tokens/sec per GPU vs single-GPU baseline
+◆ DCGM Exporter (NVLink metrics)
+◆ NVIDIA Nsight Systems (inter-GPU comms overlap)
+● NVIDIA NVSwitch telemetry via NMX
+API Retry Network Waste
+Duplicate token payloads retransmitted when LLM API rate limits trigger client-side retries.
+⚡ Each retry = full prompt retransmitted + possible duplicate billing at provider
+✓ Exponential backoff + jitter; request queue with rate limiter; pre-check token budget
+• HTTP 429 rate per endpoint + API key
+• Retry count per request from middleware
+• Wasted cost = (retries-1) × prompt_tokens × cost_per_token
+◆ LiteLLM (unified LLM gateway with retry logic + rate limiting)
+◆ Prometheus (HTTP 429 rate tracking)
+● Kong AI Gateway
+● Portkey.ai
+Service Mesh Overhead
+CPU and latency overhead of sidecar proxies on high-throughput AI inference services.
+⚡ Envoy sidecar adds 5–15% CPU overhead per request; at 1000 RPS = significant waste
+✓ Profile sidecar CPU on inference pods; offload mTLS to DPU; consider ambient mesh (no sidecar)
+• Sidecar container CPU (cpu_usage_seconds_total per sidecar)
+• p99 latency with vs without sidecar
+• Envoy request duration histogram
+◆ Cilium (eBPF-native, no sidecar)
+◆ Istio Ambient Mesh (sidecar-less)
+● NVIDIA BlueField DPU (offload mTLS/policy to DPU)
+● Solo.io Gloo Mesh
+Layer 4  ·  Platform / Kubernetes  —  Cluster idle · Pod over-requests · Scheduling · Image pull · Observability self-cost
+Cost Variable
+Definition
+Driver  →  Opportunity
+Telemetry  (metric / source)
+Tooling
+Cluster Idle Capacity
+K8s nodes provisioned and billing with no pods scheduled — common in dedicated AI training clusters.
+⚡ Cluster stays live overnight after training completes; full node cost continues
+✓ Scale-to-zero on schedule; spot node groups with fast provisioning; bin-pack remaining workloads
+• kube_node_status_allocatable vs pod resource requests (gap = idle)
+• Node billing events from cloud provider
+• GPU idle time: dcgm_gpu_utilization < 5% for > 10min
+◆ Karpenter (node autoprovisioner + scale-to-zero)
+◆ Cluster Autoscaler
+● run:ai Cluster Management
+● Spot.io Ocean for K8s
+Over-requested Pod Resources
+CPU/memory requests set higher than actual usage — scheduler holds capacity that's never consumed.
+⚡ Developers set requests 2–5× actual use 'to be safe'; GPU nodes under-packed
+✓ VPA (Vertical Pod Autoscaler) recommendations; right-sizing reports per namespace/team
+• kube_pod_container_resource_requests vs container_cpu_usage_seconds_total
+• VPA recommendation logs
+• Namespace-level efficiency ratio (usage ÷ request)
+◆ VPA (Vertical Pod Autoscaler)
+◆ Goldilocks (VPA recommendation UI)
+● Kubecost (right-sizing recommendations)
+● CAST AI (autonomous right-sizing)
+GPU Scheduling Fragmentation
+GPU fragmentation — small requests spread across nodes leaving no node with enough free GPUs for large jobs.
+⚡ A 4-GPU job waits while 4 GPUs exist spread across 4 nodes — scheduler can't gang-allocate
+✓ Gang scheduling; bin-packing scheduler policy; GPU defragmentation daemon
+• Pending pod duration (kube_pod_status_phase + scheduler events)
+• Nodes with 1–3 free GPUs that could consolidate
+• Job queue wait time from training scheduler
+◆ NVIDIA KAI Scheduler (gang scheduling + bin-packing)
+◆ Volcano (batch scheduling for K8s)
+● run:ai (GPU-aware scheduler + queue management)
+Container Image Pull Latency
+Time and bandwidth to pull large AI containers on cold start — delays job start, wastes GPU idle billing.
+⚡ 50GB+ images pulled from remote registry add 10–30min of GPU-billed idle time per cold start
+✓ Pre-warm images on node groups; local registry mirror; lazy pull (eStargz)
+• Container pull duration (kubelet container_pull_duration_seconds)
+• GPU billed idle: pod scheduled → container ready gap
+• Registry egress cost per image per pull
+◆ Harbor (local registry mirror + pre-warming)
+◆ Stargz Snapshotter (lazy pull)
+● AWS ECR Pull-Through Cache / GCP Artifact Registry regional replication
+Observability Self-Cost
+Cost of the monitoring infrastructure itself — metric cardinality, log volume, trace storage.
+⚡ High-cardinality Prometheus (per-pod labels) causes metric explosion; log-everything = TBs/day
+✓ Cardinality cap; head-based sampling for non-error traces; tiered log retention
+• Prometheus TSDB series count + ingestion rate
+• Log ingestion volume (GB/day) by namespace
+• Trace storage cost vs query frequency
+◆ Thanos / Mimir (long-term Prometheus with downsampling)
+◆ VictoriaMetrics (high-cardinality efficient)
+● Grafana Cloud (usage-based pricing)
+● Datadog Log Rehydration (tiered)
+Namespace / Tenant Policy Overhead
+CPU and latency overhead of admission webhooks, network policies and OPA/Kyverno enforcement.
+⚡ Kyverno policy evaluation adds latency on every pod admission; network policies add CPU at scale
+✓ Profile webhook latency; batch checks; offload network policy to eBPF or DPU
+• apiserver_admission_webhook_duration_seconds
+• Kyverno policy evaluation time
+• Per-namespace resource quota vs actual usage
+◆ Kyverno (K8s-native policy engine)
+◆ Cilium (eBPF network policy, near-zero CPU)
+● NVIDIA BlueField DPU (network policy offload)
+● Styra DAS (OPA management)
+Layer 5  ·  Model Operations  —  Training FLOPs · Fine-tuning · Serving efficiency · Version bloat · Quantisation · Sweeps
+Cost Variable
+Definition
+Driver  →  Opportunity
+Telemetry  (metric / source)
+Tooling
+Training Compute (FLOPs)
+Total FLOPs for a training run — proportional to model size × dataset size × steps.
+⚡ Runs that diverge or misconfigure waste 100% of compute; no early stopping detection
+✓ Compute-optimal scaling (Chinchilla); early stopping on plateau; kill budget per run
+• Training loss curve (W&B/MLflow)
+• MFU = actual FLOP/s ÷ theoretical peak
+• Step time + throughput (tokens/sec)
+◆ Weights & Biases / MLflow (experiment tracking)
+◆ Determined.ai (training platform with kill rules)
+● Weights & Biases Launch (compute budgets)
+Fine-tuning Cost
+Cost of adapting a pre-trained model — full fine-tune vs parameter-efficient (LoRA/QLoRA).
+⚡ Full fine-tune of 70B costs $50–200K; teams run multiple exploratory runs without cost guard
+✓ Default to LoRA/QLoRA (1–5% cost of full fine-tune); cost-per-run tracking; per-job kill budget
+• GPU-hours per fine-tune run with cost attribution
+• LoRA rank and alpha config from experiment metadata
+• Loss convergence speed (steps to target perplexity)
+◆ Hugging Face PEFT (LoRA/QLoRA)
+◆ LLaMA-Factory (fine-tuning framework with efficiency metrics)
+● Together AI / Modal (cost-transparent fine-tuning)
+● NVIDIA NeMo (enterprise fine-tuning)
+Inference Serving Efficiency
+Tokens per second per GPU dollar — the primary unit-economics metric for production inference.
+⚡ Single-request batching on a GPU built for 256-token batches → < 5% GPU utilisation
+✓ Continuous batching (vLLM); speculative decoding; disaggregated prefill/decode (Dynamo)
+• Tokens generated/sec per GPU
+• Batch size distribution histogram
+• TTFT p50/p95 (prefill cost)
+• TPOT (decode cost)
+◆ vLLM (continuous batching, prefix caching)
+◆ SGLang (RadixAttention)
+◆ TGI — Text Generation Inference (HuggingFace)
+● NVIDIA Dynamo
+● NVIDIA NIM
+Model Version Proliferation
+Accumulation of base, fine-tuned, quantised, shadow, A/B model copies with no lifecycle governance.
+⚡ Unused model versions hold GPU memory in warm pools and consume storage indefinitely
+✓ Auto-expire non-production versions after N days; traffic-based model retirement policy
+• Model registry version count + last-accessed ts
+• GPU memory reserved per warm model version
+• Inference traffic % per model version
+◆ MLflow Model Registry (versioning + retirement)
+◆ BentoML (model serving lifecycle)
+● Weights & Biases Registry
+● NVIDIA NGC Private Registry
+Quantisation Efficiency
+Trade-off between model precision (FP32/FP16/INT8/INT4) and cost, memory, and quality.
+⚡ Running FP32 where INT8 meets quality SLA → 2–4× GPU memory and cost waste
+✓ Benchmark quality at each precision level; recommend lowest precision meeting quality threshold
+• Inference quality eval score per quantisation config
+• GPU memory per model per precision
+• Throughput (tokens/sec) per precision format
+◆ bitsandbytes (INT8/INT4 quantisation)
+◆ AutoGPTQ / llama.cpp (GGUF quantisation)
+● NVIDIA TensorRT-LLM (INT8/FP8 optimisation)
+Hyperparameter Sweep Cost
+GPU cost of running many trials in a hyperparameter optimisation sweep.
+⚡ Uncontrolled sweeps spawn hundreds of GPU jobs; no budget cap per sweep; results stored forever
+✓ Budget limit per trial; async successive halving (Hyperband/ASHA); delete failed-trial artifacts
+• Sweep job count + GPU cost per trial (experiment tracker API)
+• Artifact storage volume per sweep
+• Trial early-termination rate (efficiency of pruning)
+◆ Optuna (Hyperband/ASHA pruning)
+◆ Ray Tune (distributed sweep + early stopping)
+● Weights & Biases Sweeps (budget limits + pruning)
+Layer 6  ·  Token & API  —  Prompt · Completion · Context bloat · Embeddings · Agent loops · Routing · Rate limits
+Cost Variable
+Definition
+Driver  →  Opportunity
+Telemetry  (metric / source)
+Tooling
+Prompt Token Cost
+Cost of input tokens — system prompt + user message + injected context.
+⚡ Verbose system prompts repeated every call; full documents injected when a paragraph suffices
+✓ Prompt compression (LLMLingua); system prompt caching; RAG to inject only relevant chunks
+• usage.prompt_tokens per API call
+• System prompt token length per endpoint
+• Prompt % of total tokens per request
+◆ LLMLingua / LongLLMLingua (prompt compression)
+◆ LiteLLM (multi-provider gateway with cost tracking)
+● Portkey.ai (prompt management + cost analytics)
+● LangSmith (prompt versioning + cost tracking)
+Completion Token Cost
+Cost of output tokens — proportional to response length and generation config.
+⚡ max_tokens set too high; no stop sequences; verbose responses on simple queries
+✓ Set max_tokens per use case; add stop sequences; use smaller model for short-answer tasks
+• usage.completion_tokens per API call
+• max_tokens config vs actual completion length
+• Completion length distribution per endpoint
+◆ LiteLLM (completion token tracking)
+◆ LMQL (constrained generation — limits output tokens structurally)
+● Portkey.ai
+● Helicone (request analytics)
+Context Window Bloat
+Sending unnecessarily large context — full conversation history or unfiltered RAG chunks.
+⚡ Full conversation appended every agent turn; retrieved chunks not filtered by relevance
+✓ Context truncation (last N turns); relevance threshold for RAG; summarise rather than append
+• total_tokens per request (context window fill rate)
+• Retrieved chunk count and size per RAG query
+• Relevance score distribution for retrieved chunks
+◆ LangChain ConversationSummaryMemory (auto-summarise history)
+◆ Semantic Kernel (context management)
+● LangSmith (context window utilisation analytics)
+● Cohere Rerank (relevance filtering before context injection)
+Embedding Call Cost
+Token cost of converting text to vectors — billed per token by provider or GPU-second self-hosted.
+⚡ Same documents re-embedded every pipeline run; no content-hash cache check
+✓ Cache embeddings by hash; incremental embed (changed chunks only); self-host for high volume
+• Embedding API call count + token volume
+• Cache hit rate on embedding cache
+• Re-embedding rate for unchanged documents
+◆ sentence-transformers (self-hosted embedding models)
+◆ Redis (semantic cache layer)
+● OpenAI Embeddings + Batch API (cost-efficient batch embedding)
+● Cohere Embed v3
+Agent Loop Token Waste
+In agentic pipelines, runaway agents or excessive reasoning steps cause exponential token cost.
+⚡ Agent retries failed tools repeatedly; over-planner generates long CoT for simple tasks
+✓ Max iteration limit; cost budget per session; tool call success rate monitoring; fast path for simple tasks
+• Token count per agent session (sum of all LLM calls)
+• Tool call count + success/failure rate per session
+• Agent session duration + step count distribution
+◆ LangGraph (agent orchestration with iteration limits)
+◆ CrewAI (multi-agent with token budgets)
+● LangSmith (agent trace + cost analytics)
+● Portkey.ai (agent cost guardrails)
+Multi-model Routing
+Routing every request to a frontier model when a smaller, cheaper model would suffice.
+⚡ GPT-4o called for queries GPT-4o-mini handles at 20× lower cost
+✓ Query complexity classifier routes simple queries to cheaper model; fallback on failure
+• Cost per model per request type
+• Response quality score per model per query type
+• Routing decision log (which model served each request)
+◆ LiteLLM Router (model routing + fallback)
+◆ RouteLLM (open-source routing by query complexity)
+● Martian (intelligent model router)
+● Portkey.ai (routing + A/B testing)
+Rate Limit Retry Waste
+Wasted tokens from LLM API rate limits triggering full prompt retransmission.
+⚡ 5% retry rate = 5% token cost increase at zero value; amplified at scale
+✓ Token bucket rate limiter in client; request queue; pre-flight token budget check
+• HTTP 429 rate per API key + model
+• Retry count per request
+• Wasted spend = (retries-1) × prompt_tokens × input_cost
+◆ LiteLLM (built-in retry logic + rate limit handling)
+◆ Tenacity (Python retry library with exponential backoff)
+● Kong AI Gateway (rate limiting + quota management)
+● Azure APIM (LLM token rate limiting)
+Layer 7  ·  Application Layer  —  RAG pipelines · DB query stalls · API latency · Guardrails · Evals · Warm pools · Shadow models
+Cost Variable
+Definition
+Driver  →  Opportunity
+Telemetry  (metric / source)
+Tooling
+RAG Pipeline Cost
+End-to-end cost of a RAG query — embedding + vector search + context injection + generation.
+⚡ Expensive embed + large retrieval context + frontier model for every query; no result caching
+✓ Semantic cache for repeated queries; reduce chunk count; downgrade embed/generation model for simple queries
+• Per-query RAG cost = embed + retrieval + generation (OTel trace)
+• Semantic cache hit rate
+• Chunk count + total token size per query
+◆ LangChain / LlamaIndex (RAG framework with OTel instrumentation)
+◆ GPTCache (semantic cache)
+● LangSmith (per-query RAG cost tracing)
+● Pinecone + Cohere Rerank
+Slow DB Query → GPU Stall
+Poor DB execution plans increase API latency, keeping GPU inference workers blocked longer per request.
+⚡ 2s DB query on inference API = GPU provisioned + waiting 2s/request; at 1000 RPS = 2000 GPU-secs wasted/sec
+✓ Fix query (index/rewrite) → measure GPU idle reduction → convert to $/day saved
+• pg_stat_statements / MySQL performance_schema (slow query log)
+• Trace span: DB duration vs total request duration (OTel)
+• Estimated GPU waste: DB_wait × RPS × GPU_cost_rate
+◆ pgBadger / pt-query-digest (slow query analysis)
+◆ OpenTelemetry (DB span instrumentation)
+● Datadog APM (DB query → cost correlation)
+● SolarWinds DPA
+API Latency → Cost Amplifier
+High-latency internal services that block GPU workers — auth, context fetch, middleware.
+⚡ 500ms auth middleware = GPU earns revenue for only 500ms of each 1000ms billing second
+✓ Cache auth tokens; async context fetch; target top-5 latency contributors by span × RPS
+• Distributed trace span duration per service (Jaeger/Tempo)
+• p95/p99 latency per internal API
+• GPU active fraction: generation_time ÷ total_request_time
+◆ OpenTelemetry + Jaeger / Tempo (distributed tracing)
+◆ Grafana (latency → cost dashboard)
+● Datadog APM
+● Honeycomb (trace-driven cost analysis)
+Guardrail Processing Cost
+Cost of running safety classifiers and compliance checks on every LLM input and output.
+⚡ Full-model guardrail (Llama Guard) per request doubles inference cost
+✓ Fast lightweight classifier first; escalate to heavy guardrail only on ambiguous cases
+• Guardrail inference latency + token cost per request
+• Fast vs heavy guardrail routing ratio
+• Guardrail cost as % of total request cost
+◆ NVIDIA NeMo Guardrails (configurable guardrail layers)
+◆ LlamaGuard (fast safety classifier)
+● Azure AI Content Safety
+● Aporia (LLM guardrails + cost tracking)
+Inference Warm Pool Cost
+Cost of keeping model replicas always-on and ready to avoid cold-start latency.
+⚡ Warm pool sized for peak traffic 24/7; traffic drops 80% overnight but full pool maintained
+✓ Time-of-day autoscaling (KEDA); predictive scaling from traffic forecast curve
+• Request rate time series per endpoint (req/min by hour of day)
+• Warm replica count vs actual concurrency served
+• Cold start latency vs warm serving latency
+◆ KEDA (event-driven autoscaler with cron + Prometheus triggers)
+◆ Knative Serving (scale-to-zero with configurable min replicas)
+● NVIDIA Dynamo (disaggregated serving with dynamic pooling)
+Evaluation Pipeline Cost
+GPU + token cost of running automated model evals, benchmarks, and quality regression tests.
+⚡ Full benchmark suite on every checkpoint; frontier LLM-as-judge for all outputs
+✓ Tiered evals (cheap heuristic → LLM-judge only when ambiguous); eval on representative sample
+• Eval run frequency + GPU-hours per suite
+• LLM-as-judge token cost per eval sample
+• Cost per quality signal (eval cost ÷ meaningful decisions)
+◆ EleutherAI lm-evaluation-harness (benchmark suite)
+◆ Ragas (RAG evaluation framework)
+● Weights & Biases Evaluations
+● Braintrust / LangSmith (LLM-as-judge with cost control)
+Shadow Model Traffic Cost
+Cost of running a shadow model in parallel for A/B testing — often over-sampled beyond statistical need.
+⚡ Shadow model receives 100% of production traffic when 5% is sufficient for significance
+✓ Shadow at 5–10% sample; auto-stop experiment when statistical significance reached
+• Shadow traffic % vs statistical power requirement
+• Shadow model GPU cost vs production model GPU cost
+• Time to significance per experiment
+◆ Iter8 (K8s-native A/B testing with significance detection)
+◆ Argo Rollouts (canary + shadow traffic control)
+● Split.io / LaunchDarkly (feature flag controlled shadow routing)
+Platform Tooling Principle:  The FinOps AI Platform is not a tooling replacement — it is a cost intelligence layer that ingests signals from every tool listed in the Tooling column above. Open-source tools (◆) form the data collection backbone. Commercial tools (●) accelerate where OSS cannot automate or scale. Our platform translates all these signals into dollar-denominated opportunities ranked by ROI and routed to the right team.
+Legend:  ◆ = Open Source  ·  ● = Commercial / SaaS  ·  ⚡ = Cost driver (how money is wasted)  ·  ✓ = Optimisation opportunity (how to save)
