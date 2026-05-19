@@ -1,0 +1,251 @@
+/* ─────────────────────────────────────────────────────────────
+   Lumen · FinOps OS — design tokens
+   Light = primary direction (CFO/finance-grade, calm, data-rich).
+   Dark = tweak-toggle, observability vibe.
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  --font-ui: "Geist", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-num: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-display: "Instrument Serif", "Times New Roman", Georgia, serif;
+
+  /* Surfaces (light) */
+  --bg:        oklch(0.984 0.004 85);
+  --panel:     oklch(0.971 0.005 85);
+  --surface:   #ffffff;
+  --raised:    oklch(0.993 0.003 85);
+  --hairline:  oklch(0.93  0.005 85);
+  --border:    oklch(0.89  0.006 85);
+  --border-strong: oklch(0.82 0.008 85);
+
+  /* Text */
+  --ink:       oklch(0.21 0.014 265);
+  --text:      oklch(0.26 0.012 265);
+  --muted:     oklch(0.5  0.012 265);
+  --subtle:    oklch(0.68 0.01  265);
+  --faint:     oklch(0.82 0.008 265);
+
+  /* Brand + signals */
+  --brand:     oklch(0.28 0.06 250);
+  --accent:    oklch(0.55 0.13 250);
+  --positive:  oklch(0.56 0.11 150);
+  --positive-soft: oklch(0.93 0.04 150);
+  --negative:  oklch(0.58 0.19 26);
+  --negative-soft: oklch(0.94 0.04 26);
+  --warning:   oklch(0.72 0.14 75);
+  --warning-soft: oklch(0.95 0.05 80);
+  --info:      oklch(0.6 0.11 230);
+  --info-soft: oklch(0.94 0.03 230);
+
+  /* Provider tints (muted) */
+  --aws:       oklch(0.68 0.14 55);
+  --gcp:       oklch(0.6  0.13 245);
+  --azure:     oklch(0.6  0.10 215);
+
+  /* Data ramp (qualitative) */
+  --d1: oklch(0.55 0.13 250);
+  --d2: oklch(0.6  0.13 150);
+  --d3: oklch(0.7  0.14 80);
+  --d4: oklch(0.6  0.16 25);
+  --d5: oklch(0.55 0.13 320);
+  --d6: oklch(0.55 0.10 210);
+  --d7: oklch(0.65 0.07 290);
+
+  /* Radii + shadow */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --shadow-1: 0 1px 0 oklch(0.86 0.006 85);
+  --shadow-2: 0 1px 2px oklch(0.82 0.008 85 / .35), 0 1px 0 oklch(0.86 0.006 85);
+  --shadow-pop: 0 18px 38px -22px oklch(0.2 0.02 270 / .35), 0 2px 4px oklch(0.2 0.02 270 / .08);
+
+  /* Density (compact by default) */
+  --dens: 1;
+  --pad: calc(10px * var(--dens));
+  --pad-lg: calc(14px * var(--dens));
+  --row: calc(28px * var(--dens));
+}
+
+.theme-dark {
+  --bg:        oklch(0.155 0.012 265);
+  --panel:     oklch(0.19  0.012 265);
+  --surface:   oklch(0.22  0.012 265);
+  --raised:    oklch(0.255 0.013 265);
+  --hairline:  oklch(0.28  0.013 265);
+  --border:    oklch(0.32  0.014 265);
+  --border-strong: oklch(0.4 0.014 265);
+
+  --ink:       oklch(0.985 0.005 85);
+  --text:      oklch(0.94  0.005 85);
+  --muted:     oklch(0.66  0.012 265);
+  --subtle:    oklch(0.55  0.012 265);
+  --faint:     oklch(0.4   0.012 265);
+
+  --brand:     oklch(0.9 0.04 250);
+  --accent:    oklch(0.72 0.15 250);
+  --positive:  oklch(0.74 0.16 150);
+  --positive-soft: oklch(0.28 0.06 150);
+  --negative:  oklch(0.72 0.19 26);
+  --negative-soft: oklch(0.28 0.08 26);
+  --warning:   oklch(0.82 0.16 78);
+  --warning-soft: oklch(0.3 0.08 78);
+  --info:      oklch(0.75 0.13 230);
+  --info-soft: oklch(0.26 0.07 230);
+
+  --d1: oklch(0.72 0.15 250);
+  --d2: oklch(0.74 0.16 150);
+  --d3: oklch(0.82 0.16 80);
+  --d4: oklch(0.72 0.19 25);
+  --d5: oklch(0.72 0.16 320);
+  --d6: oklch(0.7  0.12 210);
+  --d7: oklch(0.78 0.08 290);
+
+  --shadow-1: 0 1px 0 oklch(0.12 0.012 265);
+  --shadow-2: 0 1px 2px oklch(0.08 0 0 / .5), 0 1px 0 oklch(0.12 0.012 265);
+  --shadow-pop: 0 18px 38px -16px oklch(0 0 0 / .55), 0 2px 4px oklch(0 0 0 / .35);
+}
+
+/* Page reset within artboards */
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--font-ui); color: var(--text); background: oklch(0.96 0.005 85); }
+.theme-dark body { background: oklch(0.13 0.012 265); }
+
+.lumen {
+  font-family: var(--font-ui);
+  color: var(--text);
+  background: var(--bg);
+  font-size: 12.5px;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  font-feature-settings: "ss01", "cv11";
+}
+.lumen .num, .lumen .mono { font-family: var(--font-num); font-feature-settings: "tnum", "zero"; letter-spacing: -0.01em; }
+.lumen .display { font-family: var(--font-display); font-style: italic; font-weight: 400; letter-spacing: -0.01em; }
+
+/* Density variants */
+.dens-comfy { --dens: 1.18; }
+.lumen.dens-comfy { font-size: 13.5px; }
+.dens-compact { --dens: 0.92; }
+.lumen.dens-compact { font-size: 11.5px; }
+
+/* Utility */
+.lumen *, .lumen *::before, .lumen *::after { box-sizing: border-box; }
+.lumen button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.lumen input { font: inherit; color: inherit; }
+.lumen svg { display: block; }
+.lumen .hairline { background: var(--hairline); }
+.lumen .vline { width: 1px; background: var(--hairline); align-self: stretch; }
+.lumen .hline { height: 1px; background: var(--hairline); width: 100%; }
+
+/* Pill / chip */
+.lumen .chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.lumen .chip.ghost { background: transparent; }
+.lumen .chip.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.lumen .chip .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.lumen .chip .x { color: var(--muted); margin-left: 2px; cursor: pointer; }
+
+/* Card */
+.lumen .card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1);
+}
+.lumen .card-flush { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); }
+
+/* Eyebrow label */
+.lumen .eyebrow {
+  font-family: var(--font-num);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Section title */
+.lumen .section-title {
+  font-size: 12.5px; font-weight: 500; color: var(--ink);
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* Tabular table */
+.lumen .tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.lumen .tbl th {
+  text-align: left; padding: 8px 10px;
+  font-weight: 500; color: var(--muted);
+  font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--panel);
+}
+.lumen .tbl td { padding: 8px 10px; border-bottom: 1px solid var(--hairline); vertical-align: middle; }
+.lumen .tbl tr:hover td { background: var(--panel); }
+.lumen .tbl td.num, .lumen .tbl th.num { text-align: right; font-family: var(--font-num); font-feature-settings: "tnum"; }
+
+/* Inline bar (for tables) */
+.lumen .inline-bar { position: relative; height: 6px; background: var(--hairline); border-radius: 999px; overflow: hidden; }
+.lumen .inline-bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: inherit; display: block; }
+
+/* Trend pill */
+.lumen .trend { font-family: var(--font-num); font-size: 11px; padding: 1px 6px; border-radius: 4px; display: inline-flex; gap: 3px; align-items: center; }
+.lumen .trend.up { background: var(--negative-soft); color: var(--negative); }
+.lumen .trend.dn { background: var(--positive-soft); color: var(--positive); }
+.lumen .trend.flat { background: var(--hairline); color: var(--muted); }
+
+/* Tooltip dot indicators next to titles */
+.lumen .legend-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+/* Buttons */
+.lumen .btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text);
+  font-size: 12px; font-weight: 500;
+}
+.lumen .btn:hover { background: var(--panel); }
+.lumen .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.lumen .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+
+/* Kbd */
+.lumen .kbd {
+  font-family: var(--font-num); font-size: 10px;
+  border: 1px solid var(--border); border-bottom-width: 1.5px;
+  padding: 1px 5px; border-radius: 4px;
+  background: var(--surface); color: var(--muted);
+}
+
+/* Sparkline area gradient hook */
+.lumen .spark-area { fill: var(--accent); opacity: 0.12; }
+.lumen .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+
+/* Provider badge */
+.lumen .pbadge {
+  width: 18px; height: 18px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-num); font-size: 10px; font-weight: 600;
+  color: white;
+}
+.lumen .pbadge.aws { background: var(--aws); }
+.lumen .pbadge.gcp { background: var(--gcp); }
+.lumen .pbadge.azure { background: var(--azure); }
+
+/* Scrollbar hidden in artboards */
+.lumen ::-webkit-scrollbar { width: 6px; height: 6px; }
+.lumen ::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 999px; }
+.lumen ::-webkit-scrollbar-track { background: transparent; }
