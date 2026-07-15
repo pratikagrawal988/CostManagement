@@ -734,6 +734,56 @@ class JobRun(Base):
     details            = Column(JSON, nullable=False, default=dict)
 
 
+class Budget(Base):
+    """Budget definition with optional scope filters; actuals computed from FocusCost."""
+    __tablename__ = "budgets"
+
+    id               = Column(String, primary_key=True, default=new_id)
+    tenant_id        = Column(String, ForeignKey("tenants.id"), nullable=False)
+    name             = Column(String, nullable=False)
+    amount           = Column(Double, nullable=False)
+    period           = Column(String, nullable=False, default="monthly")  # monthly|quarterly|annual
+    currency         = Column(String, nullable=False, default="USD")
+    # Scope filters — empty string means "all"
+    provider_name    = Column(String, nullable=False, default="")
+    service_category = Column(String, nullable=False, default="")
+    sub_account_id   = Column(String, nullable=False, default="")
+    alert_thresholds = Column(JSON,   nullable=False, default=list)       # e.g. [80, 100] (% of amount)
+    owner_email      = Column(String, nullable=False, default="")
+    enabled          = Column(Boolean, nullable=False, default=True)
+    created_at       = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at       = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class NotificationChannel(Base):
+    """Delivery target for alerts: Slack incoming webhook or email address."""
+    __tablename__ = "notification_channels"
+
+    id         = Column(String, primary_key=True, default=new_id)
+    tenant_id  = Column(String, ForeignKey("tenants.id"), nullable=False)
+    type       = Column(String, nullable=False)                 # slack | email
+    name       = Column(String, nullable=False, default="")
+    target     = Column(String, nullable=False)                 # webhook URL / email address
+    enabled    = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class AlertNotification(Base):
+    """Record of a sent budget alert — one row per (budget, threshold, period)."""
+    __tablename__ = "alert_notifications"
+    __table_args__ = (UniqueConstraint("budget_id", "threshold", "period_start"),)
+
+    id              = Column(String, primary_key=True, default=new_id)
+    tenant_id       = Column(String, ForeignKey("tenants.id"), nullable=False)
+    budget_id       = Column(String, ForeignKey("budgets.id"), nullable=False)
+    threshold       = Column(Double, nullable=False)
+    period_start    = Column(String, nullable=False)
+    utilization_pct = Column(Double, nullable=False, default=0.0)
+    message         = Column(Text,   nullable=False, default="")
+    results         = Column(JSON,   nullable=False, default=list)  # per-channel send outcomes
+    created_at      = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 

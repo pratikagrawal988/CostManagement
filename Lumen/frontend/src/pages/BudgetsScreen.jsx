@@ -1,17 +1,42 @@
 // Screen 4 — Budgets & Forecasts
 // Top: KPI strip. Main: Q2 runway viz + budget list. Right: forecast
 // scenarios & commitment timeline.
+import { useState } from 'react';
 import {
   Sidebar, Topbar, FilterBar, KPI, Ico, Tag, Avatar, fmtUSD, pct,
 } from '../components/Shared.jsx';
+import BudgetManager from '../components/BudgetManager.jsx';
 import '../styles/tokens.css';
 
 export default function BudgetsScreen({ onNavigate }) {
+  const [live, setLive] = useState(false);
+
+  if (live) {
+    return (
+      <div className="lumen" style={{ height: '100vh' }}>
+        <Sidebar active="budgets" onNavigate={onNavigate} />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <Topbar crumbs={['Acme Inc.', 'Budgets & Forecast', 'Manage']} />
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px' }}>
+            <div style={{ maxWidth: 860, margin: '0 auto' }}>
+              <ViewToggle live={live} setLive={setLive} />
+              <div style={{ height: 12 }} />
+              <BudgetManager />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="lumen">
       <Sidebar active="budgets" onNavigate={onNavigate} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <Topbar crumbs={['Acme Inc.', 'Budgets & Forecast', 'FY26 · Q2']} asMonth="May 2026" />
+        <div style={{ padding: '8px 14px 0' }}>
+          <ViewToggle live={live} setLive={setLive} />
+        </div>
         <FilterBar
           range="Apr 1 – Jun 30, 2026"
           granularity="Monthly"
@@ -163,6 +188,26 @@ export default function BudgetsScreen({ onNavigate }) {
           </aside>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ViewToggle({ live, setLive }) {
+  const btn = (active) => ({
+    border: '1px solid var(--hairline)', borderRadius: 8, cursor: 'pointer',
+    fontSize: 11, fontWeight: 600, padding: '4px 12px',
+    background: active ? 'var(--ink)' : 'var(--surface)',
+    color: active ? 'var(--surface)' : 'var(--muted)',
+  });
+  return (
+    <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <button style={btn(!live)} onClick={() => setLive(false)}>Demo view</button>
+      <button style={btn(live)} onClick={() => setLive(true)}>Live budgets</button>
+      {!live && (
+        <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>
+          Demo view shows illustrative data · switch to Live to manage real budgets
+        </span>
+      )}
     </div>
   );
 }

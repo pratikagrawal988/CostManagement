@@ -5,6 +5,8 @@ import ExecutiveOverview from "./pages/ExecutiveOverview";
 import AnomaliesScreen from "./pages/AnomaliesScreen";
 import BudgetsScreen from "./pages/BudgetsScreen";
 import RecommendationsScreen from "./pages/RecommendationsScreen";
+import CredentialManager from "./pages/CredentialManager";
+import UserManagement from "./pages/UserManagement";
 import "./styles/tokens.css";
 
 type ViewId = "overview" | "explorer" | "ai" | "anomalies" | "budgets" | "recommendations" | "resources" | "tags" | "teams" | "reports" | "settings";
@@ -58,24 +60,20 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
             <WIPContent title="Tag Policy" navigate={navigate} active="tags" />
           </div>
         );
-      case "teams":
-        return (
-          <div className="lumen" style={{ height: "100vh" }}>
-            <WIPContent title="Teams" navigate={navigate} active="teams" />
-          </div>
-        );
+      case "teams": {
+        const Um = UserManagement as any;
+        return <Um onNavigate={navigate} />;
+      }
       case "reports":
         return (
           <div className="lumen" style={{ height: "100vh" }}>
             <WIPContent title="Reports" navigate={navigate} active="reports" />
           </div>
         );
-      case "settings":
-        return (
-          <div className="lumen" style={{ height: "100vh" }}>
-            <WIPContent title="Settings" navigate={navigate} active="settings" />
-          </div>
-        );
+      case "settings": {
+        const Cm = CredentialManager as any;
+        return <Cm onNavigate={navigate} />;
+      }
       default: {
         const Ov = ExecutiveOverview as any;
         return <Ov onNavigate={navigate} />;

@@ -140,7 +140,14 @@ _DEV_TOKEN = TokenPayload({
 def get_optional_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> TokenPayload:
-    """Like get_current_user but falls back to dev token when bypass is enabled."""
+    """Like get_current_user but falls back to dev token when bypass is enabled.
+
+    A real Bearer token, when presented, is always honored — even in dev mode —
+    so RBAC enforcement can be exercised. The dev-admin fallback applies only
+    to unauthenticated requests.
+    """
+    if credentials is not None:
+        return get_current_user(credentials)
     if _DEV_BYPASS:
         return _DEV_TOKEN
     return get_current_user(credentials)

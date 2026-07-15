@@ -21,8 +21,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from .auth import get_optional_tenant
+from .auth import TokenPayload, get_optional_tenant
+from .crypto import decrypt_secret, encrypt_secret
 from .database import get_db
+from .rbac import record_audit, require_permission
 from .models import (
     CostIngestConfig, AzureCostIngestConfig, GcpCostIngestConfig,
     ProviderConnection, new_id, utcnow,
@@ -137,7 +139,11 @@ def list_credentials(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/aws")
-def upsert_aws_credential(req: AWSCredentialRequest, db: Session = Depends(get_db)):
+def upsert_aws_credential(
+    req: AWSCredentialRequest,
+    current: TokenPayload = Depends(require_permission("credentials:write")),
+    db: Session = Depends(get_db),
+):
     """Create or update an AWS CUR ingest config."""
     existing = db.query(CostIngestConfig).filter(
         CostIngestConfig.tenant_id == req.tenant_id,
@@ -153,6 +159,8 @@ def upsert_aws_credential(req: AWSCredentialRequest, db: Session = Depends(get_d
         existing.enabled         = req.enabled
         existing.updated_at      = utcnow()
         db.commit()
+        record_audit(db, current, action="credential.update", resource_type="aws_config",
+                     resource_id=existing.id, detail={"s3_bucket": req.s3_bucket})
         return {"status": "updated", "id": existing.id}
 
     cfg = CostIngestConfig(
@@ -168,6 +176,8 @@ def upsert_aws_credential(req: AWSCredentialRequest, db: Session = Depends(get_d
     )
     db.add(cfg)
     db.commit()
+    record_audit(db, current, action="credential.create", resource_type="aws_config",
+                 resource_id=cfg.id, detail={"s3_bucket": req.s3_bucket})
     return {"status": "created", "id": cfg.id}
 
 
@@ -176,7 +186,11 @@ def upsert_aws_credential(req: AWSCredentialRequest, db: Session = Depends(get_d
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/azure")
-def upsert_azure_credential(req: AzureCredentialRequest, db: Session = Depends(get_db)):
+def upsert_azure_credential(
+    req: AzureCredentialRequest,
+    current: TokenPayload = Depends(require_permission("credentials:write")),
+    db: Session = Depends(get_db),
+):
     """
     Create or update an Azure Cost Management config.
     client_secret is stored in the encrypted config JSON blob — never in a
@@ -187,9 +201,8 @@ def upsert_azure_credential(req: AzureCredentialRequest, db: Session = Depends(g
         AzureCostIngestConfig.subscription_id == req.subscription_id,
     ).one_or_none()
 
-    # Encrypt secret (basic base64 here — replace with KMS/Vault in production)
-    import base64
-    encrypted_secret = base64.b64encode(req.client_secret.encode()).decode()
+    # Envelope-encrypted at rest (versioned format, KMS-swappable) — see crypto.py
+    encrypted_secret = encrypt_secret(req.client_secret)
 
     if existing:
         existing.name                = req.name
@@ -200,6 +213,8 @@ def upsert_azure_credential(req: AzureCredentialRequest, db: Session = Depends(g
         existing.config              = {**existing.config, "encrypted_secret": encrypted_secret}
         existing.updated_at          = utcnow()
         db.commit()
+        record_audit(db, current, action="credential.update", resource_type="azure_config",
+                     resource_id=existing.id, detail={"subscription_id": req.subscription_id})
         return {"status": "updated", "id": existing.id}
 
     cfg = AzureCostIngestConfig(
@@ -215,6 +230,8 @@ def upsert_azure_credential(req: AzureCredentialRequest, db: Session = Depends(g
     )
     db.add(cfg)
     db.commit()
+    record_audit(db, current, action="credential.create", resource_type="azure_config",
+                 resource_id=cfg.id, detail={"subscription_id": req.subscription_id})
     return {"status": "created", "id": cfg.id}
 
 
@@ -223,7 +240,11 @@ def upsert_azure_credential(req: AzureCredentialRequest, db: Session = Depends(g
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/gcp")
-def upsert_gcp_credential(req: GCPCredentialRequest, db: Session = Depends(get_db)):
+def upsert_gcp_credential(
+    req: GCPCredentialRequest,
+    current: TokenPayload = Depends(require_permission("credentials:write")),
+    db: Session = Depends(get_db),
+):
     """
     Create or update a GCP Billing BigQuery config.
     service_account_json stored encrypted in config JSON.
@@ -233,8 +254,7 @@ def upsert_gcp_credential(req: GCPCredentialRequest, db: Session = Depends(get_d
         GcpCostIngestConfig.gcp_project_id == req.gcp_project_id,
     ).one_or_none()
 
-    import base64
-    encrypted_sa = base64.b64encode(req.service_account_json.encode()).decode() if req.service_account_json else ""
+    encrypted_sa = encrypt_secret(req.service_account_json) if req.service_account_json else ""
 
     if existing:
         existing.name              = req.name
@@ -244,6 +264,8 @@ def upsert_gcp_credential(req: GCPCredentialRequest, db: Session = Depends(get_d
         existing.config            = {**existing.config, "encrypted_sa_json": encrypted_sa}
         existing.updated_at        = utcnow()
         db.commit()
+        record_audit(db, current, action="credential.update", resource_type="gcp_config",
+                     resource_id=existing.id, detail={"gcp_project_id": req.gcp_project_id})
         return {"status": "updated", "id": existing.id}
 
     cfg = GcpCostIngestConfig(
@@ -258,6 +280,8 @@ def upsert_gcp_credential(req: GCPCredentialRequest, db: Session = Depends(get_d
     )
     db.add(cfg)
     db.commit()
+    record_audit(db, current, action="credential.create", resource_type="gcp_config",
+                 resource_id=cfg.id, detail={"gcp_project_id": req.gcp_project_id})
     return {"status": "created", "id": cfg.id}
 
 
@@ -268,7 +292,7 @@ def upsert_gcp_credential(req: GCPCredentialRequest, db: Session = Depends(get_d
 @router.post("/{config_id}/test")
 async def test_credential(
     config_id: str,
-    tenant_id: str = Depends(get_optional_tenant),
+    current: TokenPayload = Depends(require_permission("credentials:write")),
     db: Session = Depends(get_db),
 ):
     """
@@ -303,6 +327,9 @@ async def test_credential(
     cfg_obj.last_tested_at = utcnow()
     db.commit()
 
+    record_audit(db, current, action="credential.test", resource_type=f"{provider}_config",
+                 resource_id=config_id, detail={"result": result["status"]},
+                 status_str=result["status"])
     return result
 
 
@@ -345,8 +372,7 @@ async def _test_aws(cfg: CostIngestConfig) -> dict:
 async def _test_azure(cfg: AzureCostIngestConfig) -> dict:
     try:
         from azure.identity import ClientSecretCredential
-        import base64, json as _json
-        secret = base64.b64decode(cfg.config.get("encrypted_secret", "")).decode()
+        secret = decrypt_secret(cfg.config.get("encrypted_secret", ""))
         cred = ClientSecretCredential(
             tenant_id=cfg.azure_tenant_id,
             client_id=cfg.client_id,
@@ -368,8 +394,8 @@ async def _test_gcp(cfg: GcpCostIngestConfig) -> dict:
     try:
         from google.cloud import bigquery
         from google.oauth2 import service_account
-        import base64, json as _json
-        sa_json = base64.b64decode(cfg.config.get("encrypted_sa_json", "")).decode()
+        import json as _json
+        sa_json = decrypt_secret(cfg.config.get("encrypted_sa_json", ""))
         creds = service_account.Credentials.from_service_account_info(
             _json.loads(sa_json),
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
@@ -396,15 +422,17 @@ async def _test_gcp(cfg: GcpCostIngestConfig) -> dict:
 @router.delete("/{config_id}")
 def delete_credential(
     config_id: str,
-    tenant_id: str = Depends(get_optional_tenant),
+    current: TokenPayload = Depends(require_permission("credentials:delete")),
     db: Session = Depends(get_db),
 ):
-    """Remove a provider credential config."""
+    """Remove a provider credential config. Admin only."""
     for Model in [CostIngestConfig, AzureCostIngestConfig, GcpCostIngestConfig]:
         obj = db.query(Model).filter(Model.id == config_id).one_or_none()
         if obj:
             db.delete(obj)
             db.commit()
+            record_audit(db, current, action="credential.delete",
+                         resource_type=Model.__tablename__, resource_id=config_id)
             return {"status": "deleted", "id": config_id}
 
     raise HTTPException(status_code=404, detail="Configuration not found")

@@ -1,173 +1,235 @@
-/**
- * CredentialManager.jsx
- * Unified UI for managing AWS / Azure / GCP provider credentials.
- * Covers: add config, edit config, test connection, enable/disable, delete.
- */
-
+// Screen — Settings · Cloud Credentials
+// Unified AWS / Azure / GCP credential management wired to the Lumen backend:
+//   GET    /api/credentials                → all configs grouped by provider
+//   POST   /api/credentials/{provider}     → upsert config (JSON body)
+//   POST   /api/credentials/{id}/test      → probe provider, updates test_status
+//   DELETE /api/credentials/{id}           → remove config
+// Each provider includes a step-by-step "Where do I find these values?" guide.
 import { useState, useEffect, useCallback } from 'react';
+import { Sidebar, Topbar, Tag } from '../components/Shared.jsx';
+import '../styles/tokens.css';
 
-const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8088';
 const TENANT = 'tenant-demo';
 
-// ── Icons ─────────────────────────────────────────────────────────────────────
-const Icon = {
-  aws:     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-5 h-5"><path d="M6.5 14.5s-2 .5-2 2.5 2 2.5 2 2.5h11s2-.5 2-2.5-2-2.5-2-2.5"/><path d="M12 4v10M8 6l4-3 4 3"/></svg>,
-  azure:   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-5 h-5"><path d="M6 8l6-4 6 4v8l-6 4-6-4z"/><path d="M12 4v16M6 8l6 4 6-4"/></svg>,
-  gcp:     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-5 h-5"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 8 8H12z"/></svg>,
-  check:   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M5 13l4 4L19 7"/></svg>,
-  error:   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>,
-  warn:    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>,
-  add:     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M12 5v14M5 12h14"/></svg>,
-  trash:   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>,
-  refresh: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
-  eye:     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
-  eyeOff:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>,
+// ── Provider definitions (fields, setup guides) ──────────────────────────────
+const PROVIDERS = {
+  aws: {
+    label: 'Amazon Web Services',
+    accent: '#e07b39',
+    tagline: 'Cost & Usage Report (CUR 2.0) delivered to S3, read via cross-account IAM role.',
+    summary: c => `s3://${c.s3_bucket}${c.s3_prefix ? '/' + c.s3_prefix : ''} · ${c.aws_role_arn || ''}`,
+    fields: [
+      { name: 'name',            label: 'Config Name',     placeholder: 'AWS CUR – Production', required: true,
+        hint: 'A label to tell configurations apart.' },
+      { name: 's3_bucket',       label: 'S3 Bucket',       placeholder: 'acme-cur-bucket', required: true,
+        hint: 'Bucket that receives your Cost & Usage Report exports.' },
+      { name: 's3_prefix',       label: 'S3 Prefix',       placeholder: 'cur/daily',
+        hint: 'Report path prefix configured in Data Exports (optional).' },
+      { name: 'aws_role_arn',    label: 'IAM Role ARN',    placeholder: 'arn:aws:iam::123456789012:role/FinOpsCurReadRole', required: true,
+        hint: 'Cross-account role we assume to read the CUR files.' },
+      { name: 'aws_external_id', label: 'External ID',     placeholder: 'finops-ext-4f9a',
+        hint: 'Shared secret in the role trust policy (prevents confused-deputy).' },
+      { name: 'aws_region',      label: 'AWS Region',      placeholder: 'us-east-1',
+        hint: 'Region of the CUR bucket. Defaults to us-east-1.' },
+    ],
+    guide: [
+      { t: 'Create the CUR export',
+        s: 'AWS Console → Billing and Cost Management → Data Exports → Create → "Standard data export (CUR 2.0)". Choose Parquet, hourly granularity, include resource IDs. Point it at an S3 bucket (this is your S3 Bucket + S3 Prefix).' },
+      { t: 'Create a read-only IAM role',
+        s: 'IAM → Roles → Create role → "AWS account" → Another account. Enter the FinOps platform account ID and tick "Require external ID" — the value you enter there is the External ID field.' },
+      { t: 'Attach a least-privilege policy',
+        s: 'Allow only s3:GetObject and s3:ListBucket on the CUR bucket (arn:aws:s3:::<bucket> and arn:aws:s3:::<bucket>/*). No write or other permissions are needed.' },
+      { t: 'Copy the Role ARN',
+        s: 'Open the role → copy its ARN (arn:aws:iam::<account>:role/<name>) into the IAM Role ARN field. First CUR delivery can take up to 24h after export creation.' },
+    ],
+    cli: `# Verify the role and bucket from your side:
+aws sts assume-role --role-arn arn:aws:iam::<acct>:role/FinOpsCurReadRole \\
+  --role-session-name finops-test --external-id <external-id>
+aws s3 ls s3://<bucket>/<prefix>/ --recursive | head`,
+  },
+
+  azure: {
+    label: 'Microsoft Azure',
+    accent: '#3b82c4',
+    tagline: 'Service Principal with Cost Management Reader, polled via the Cost Management API.',
+    summary: c => `Subscription ${c.subscription_id} · App ${c.client_id}`,
+    fields: [
+      { name: 'name',                label: 'Config Name',           placeholder: 'Azure Cost – Production', required: true,
+        hint: 'A label to tell configurations apart.' },
+      { name: 'azure_tenant_id',     label: 'Directory (Tenant) ID', placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', required: true, guid: true,
+        hint: 'Your Microsoft Entra ID tenant GUID (36 chars).' },
+      { name: 'subscription_id',     label: 'Subscription ID',       placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', required: true, guid: true,
+        hint: 'The subscription whose costs we ingest (36 chars).' },
+      { name: 'client_id',           label: 'Application (Client) ID', placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', required: true, guid: true,
+        hint: 'App ID of the registered application / Service Principal.' },
+      { name: 'client_secret',       label: 'Client Secret',         placeholder: '••••••••••••', required: true, secret: true,
+        hint: 'Secret VALUE (not the Secret ID). Shown only once in the portal — stored encrypted here.' },
+      { name: 'management_group_id', label: 'Management Group ID',   placeholder: 'Optional — for tenant-wide billing',
+        hint: 'Only needed to ingest costs across many subscriptions at once.' },
+    ],
+    guide: [
+      { t: 'Find your Tenant ID',
+        s: 'Azure Portal → Microsoft Entra ID → Overview → "Tenant ID". (CLI: az account show --query tenantId)' },
+      { t: 'Register an application',
+        s: 'Microsoft Entra ID → App registrations → New registration. Name it e.g. "finops-cost-reader", single tenant, no redirect URI. After creation, the Overview page shows "Application (client) ID" — that is your Client ID.' },
+      { t: 'Create a client secret',
+        s: 'In the app: Certificates & secrets → Client secrets → New client secret. Copy the VALUE column immediately — it is shown only once. This is your Client Secret. Set a reminder before its expiry date (max 24 months).' },
+      { t: 'Find your Subscription ID',
+        s: 'Portal → Subscriptions → select the subscription → copy "Subscription ID". (CLI: az account list -o table)' },
+      { t: 'Grant Cost Management Reader',
+        s: 'On that subscription: Access control (IAM) → Add → Add role assignment → role "Cost Management Reader" → Members → select your app by name. Without this the connection test will fail with 401/403.' },
+    ],
+    cli: `# One-shot setup with Azure CLI (prints appId=Client ID, password=Client Secret, tenant=Tenant ID):
+az ad sp create-for-rbac --name finops-cost-reader \\
+  --role "Cost Management Reader" \\
+  --scopes /subscriptions/<subscription-id>`,
+  },
+
+  gcp: {
+    label: 'Google Cloud',
+    accent: '#2f9e8f',
+    tagline: 'Billing export to BigQuery, read with a Service Account key.',
+    summary: c => `Project ${c.gcp_project_id} · ${c.bigquery_dataset}.${c.bigquery_table}`,
+    fields: [
+      { name: 'name',                 label: 'Config Name',        placeholder: 'GCP Billing – Production', required: true,
+        hint: 'A label to tell configurations apart.' },
+      { name: 'gcp_project_id',       label: 'Project ID',         placeholder: 'acme-billing-admin', required: true,
+        hint: 'Project that hosts the BigQuery billing export dataset.' },
+      { name: 'bigquery_dataset',     label: 'BigQuery Dataset',   placeholder: 'billing_export', required: true,
+        hint: 'Dataset selected when enabling billing export.' },
+      { name: 'bigquery_table',       label: 'BigQuery Table',     placeholder: 'gcp_billing_export_v1_01A2B3_C4D5E6_F7G8H9', required: true,
+        hint: 'Auto-created by the export; the name includes your billing account ID.' },
+      { name: 'service_account_json', label: 'Service Account JSON Key', textarea: true, required: true,
+        placeholder: '{ "type": "service_account", "project_id": "...", "private_key": "...", ... }',
+        hint: 'Paste the full JSON key file contents. Stored encrypted, used server-side only.' },
+    ],
+    guide: [
+      { t: 'Enable billing export to BigQuery',
+        s: 'Console → Billing → Billing export → BigQuery export → enable "Standard usage cost" (and optionally "Detailed usage cost"). Pick a project + dataset (e.g. billing_export) — these are your Project ID and BigQuery Dataset. Data starts flowing from enablement; it is not backfilled.' },
+      { t: 'Find the export table name',
+        s: 'BigQuery → your dataset → the export creates a table named gcp_billing_export_v1_<BILLING_ACCT_ID with underscores>. Copy the exact name into BigQuery Table.' },
+      { t: 'Create a service account',
+        s: 'IAM & Admin → Service Accounts → Create. Name e.g. "finops-billing-reader".' },
+      { t: 'Grant read-only BigQuery roles',
+        s: 'Grant the service account: "BigQuery Data Viewer" (on the export dataset, or project) + "BigQuery Job User" (on the project, to run queries). Nothing else is required.' },
+      { t: 'Create and download a JSON key',
+        s: 'Service account → Keys → Add key → Create new key → JSON. Open the downloaded file and paste its full contents into the JSON Key field.' },
+    ],
+    cli: `# Equivalent gcloud setup:
+gcloud iam service-accounts create finops-billing-reader --project <project-id>
+gcloud projects add-iam-policy-binding <project-id> \\
+  --member serviceAccount:finops-billing-reader@<project-id>.iam.gserviceaccount.com \\
+  --role roles/bigquery.jobUser
+bq add-iam-policy-binding --member=serviceAccount:finops-billing-reader@<project-id>.iam.gserviceaccount.com \\
+  --role=roles/bigquery.dataViewer <project-id>:billing_export
+gcloud iam service-accounts keys create key.json \\
+  --iam-account finops-billing-reader@<project-id>.iam.gserviceaccount.com`,
+  },
 };
 
-// ── Status Badge ──────────────────────────────────────────────────────────────
-function StatusBadge({ status }) {
+const GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// ── Small atoms ───────────────────────────────────────────────────────────────
+function StatusPill({ status }) {
   const map = {
-    ok:      { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: Icon.check,   label: 'Connected'  },
-    error:   { bg: 'bg-red-50',     text: 'text-red-700',     border: 'border-red-200',     icon: Icon.error,   label: 'Error'      },
-    warning: { bg: 'bg-amber-50',   text: 'text-amber-700',   border: 'border-amber-200',   icon: Icon.warn,    label: 'Warning'    },
-    pending: { bg: 'bg-slate-50',   text: 'text-slate-500',   border: 'border-slate-200',   icon: null,         label: 'Not tested' },
+    ok:      { c: 'var(--positive, #1a9e6e)', bg: 'rgba(26,158,110,.1)',  label: 'Connected' },
+    error:   { c: 'var(--negative, #d64545)', bg: 'rgba(214,69,69,.1)',   label: 'Failed' },
+    pending: { c: 'var(--muted)',             bg: 'var(--hairline)',      label: 'Not tested' },
   };
   const s = map[status] || map.pending;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${s.bg} ${s.text} ${s.border}`}>
-      {s.icon && <span className="shrink-0">{s.icon}</span>}
+    <span style={{ fontSize: 11, fontWeight: 600, color: s.c, background: s.bg, padding: '2px 8px', borderRadius: 999 }}>
       {s.label}
     </span>
   );
 }
 
-// ── Provider Card ─────────────────────────────────────────────────────────────
-function ProviderCard({ provider, configs, onAdd, onTest, onDelete, testing }) {
-  const meta = {
-    aws:   { label: 'Amazon Web Services', color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', icon: Icon.aws,   hint: 'Connect via cross-account IAM role for Cost & Usage Reports.' },
-    azure: { label: 'Microsoft Azure',     color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200',   icon: Icon.azure, hint: 'Use a Service Principal with Cost Management Reader role.'     },
-    gcp:   { label: 'Google Cloud',        color: 'text-teal-600',   bg: 'bg-teal-50',   border: 'border-teal-200',   icon: Icon.gcp,   hint: 'Export billing to BigQuery and provide a Service Account JSON.'  },
-  }[provider];
+function Btn({ children, onClick, kind = 'ghost', disabled, small }) {
+  const base = {
+    border: '1px solid var(--hairline)', borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
+    fontSize: small ? 11 : 12, fontWeight: 600, padding: small ? '4px 10px' : '7px 14px',
+    opacity: disabled ? 0.5 : 1, background: 'var(--surface)', color: 'var(--ink)',
+  };
+  if (kind === 'primary') { base.background = 'var(--ink)'; base.color = 'var(--surface)'; base.border = '1px solid var(--ink)'; }
+  if (kind === 'danger')  { base.color = 'var(--negative, #d64545)'; }
+  return <button style={base} onClick={onClick} disabled={disabled}>{children}</button>;
+}
 
+// ── Setup guide (collapsible) ─────────────────────────────────────────────────
+function SetupGuide({ provider }) {
+  const [open, setOpen] = useState(false);
+  const p = PROVIDERS[provider];
   return (
-    <div className={`rounded-xl border ${meta.border} overflow-hidden`}>
-      {/* Header */}
-      <div className={`flex items-center justify-between px-5 py-4 ${meta.bg}`}>
-        <div className="flex items-center gap-3">
-          <span className={`${meta.color}`}>{meta.icon}</span>
-          <div>
-            <div className="font-semibold text-slate-800">{meta.label}</div>
-            <div className="text-xs text-slate-500 mt-0.5">{meta.hint}</div>
+    <div style={{ borderTop: '1px dashed var(--hairline)', marginTop: 10, paddingTop: 8 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: p.accent, fontSize: 12, fontWeight: 600, padding: 0 }}
+      >
+        {open ? '▾' : '▸'} Where do I find these values? — {p.label} setup guide
+      </button>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {p.guide.map((g, i) => (
+              <li key={i} style={{ fontSize: 12, lineHeight: 1.5 }}>
+                <span style={{ fontWeight: 600 }}>{g.t}.</span>{' '}
+                <span style={{ color: 'var(--muted)' }}>{g.s}</span>
+              </li>
+            ))}
+          </ol>
+          <pre style={{
+            marginTop: 10, background: 'var(--ink)', color: 'var(--surface)', borderRadius: 8,
+            padding: '10px 12px', fontSize: 11, lineHeight: 1.55, overflowX: 'auto', whiteSpace: 'pre',
+          }}>{p.cli}</pre>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+            Least privilege: only read access to billing data is required. Secrets are encrypted at rest and never returned by the API or written to logs.
           </div>
-        </div>
-        <button
-          onClick={() => onAdd(provider)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm"
-        >
-          {Icon.add} Add config
-        </button>
-      </div>
-
-      {/* Config rows */}
-      {configs.length === 0 ? (
-        <div className="px-5 py-5 text-sm text-slate-400 text-center">
-          No {meta.label} configurations yet
-        </div>
-      ) : (
-        <div className="divide-y divide-slate-100">
-          {configs.map(cfg => (
-            <ConfigRow
-              key={cfg.id}
-              cfg={cfg}
-              onTest={() => onTest(cfg.id)}
-              onDelete={() => onDelete(cfg.id)}
-              testing={testing === cfg.id}
-            />
-          ))}
         </div>
       )}
     </div>
   );
 }
 
-function ConfigRow({ cfg, onTest, onDelete, testing }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="px-5 py-3">
-      <div className="flex items-center gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-sm text-slate-800 truncate">{cfg.name}</span>
-            <StatusBadge status={cfg.test_status} />
-            {!cfg.enabled && (
-              <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Disabled</span>
-            )}
-          </div>
-          <div className="text-xs text-slate-400 mt-0.5">
-            {cfg.provider === 'aws'   && `s3://${cfg.s3_bucket}${cfg.s3_prefix ? '/' + cfg.s3_prefix : ''} · ${cfg.aws_role_arn}`}
-            {cfg.provider === 'azure' && `Subscription: ${cfg.subscription_id} · Client: ${cfg.client_id}`}
-            {cfg.provider === 'gcp'   && `Project: ${cfg.gcp_project_id} · Dataset: ${cfg.bigquery_dataset}.${cfg.bigquery_table}`}
-          </div>
-          {cfg.test_message && cfg.test_status === 'error' && (
-            <div className="text-xs text-red-600 mt-1 font-mono bg-red-50 px-2 py-1 rounded">{cfg.test_message}</div>
-          )}
-          {cfg.last_sync_at && (
-            <div className="text-xs text-slate-400 mt-0.5">
-              Last sync: {new Date(cfg.last_sync_at).toLocaleString()}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={onTest}
-            disabled={testing}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {testing ? (
-              <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            ) : Icon.refresh}
-            Test
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50"
-          >
-            {Icon.trash}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Add Config Modal ──────────────────────────────────────────────────────────
-function AddModal({ provider, onClose, onSaved }) {
-  const [form, setForm] = useState({
-    name: provider === 'aws' ? 'AWS CUR' : provider === 'azure' ? 'Azure Cost' : 'GCP Billing',
-    // AWS
-    s3_bucket: '', s3_prefix: '', aws_role_arn: '', aws_external_id: '', aws_region: 'us-east-1',
-    // Azure
-    azure_tenant_id: '', client_id: '', client_secret: '', subscription_id: '', management_group_id: '',
-    // GCP
-    gcp_project_id: '', bigquery_dataset: '', bigquery_table: 'gcp_billing_export_v1', service_account_json: '',
-  });
+// ── Add-config form ───────────────────────────────────────────────────────────
+function AddConfigForm({ provider, onClose, onSaved }) {
+  const p = PROVIDERS[provider];
+  const init = {};
+  p.fields.forEach(f => { init[f.name] = ''; });
+  const [form, setForm] = useState(init);
   const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-  const [showSecret, setShowSecret] = useState(false);
+  const [error, setError] = useState('');
+  const [reveal, setReveal] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  const validate = () => {
+    for (const f of p.fields) {
+      const v = (form[f.name] || '').trim();
+      if (f.required && !v) return `${f.label} is required.`;
+      if (f.guid && v && !GUID_RE.test(v)) return `${f.label} must be a 36-character GUID (8-4-4-4-12).`;
+      if (f.name === 'service_account_json' && v) {
+        try { JSON.parse(v); } catch { return 'Service Account JSON Key is not valid JSON — paste the entire key file contents.'; }
+      }
+    }
+    return '';
+  };
+
   const save = async () => {
+    const v = validate();
+    if (v) { setError(v); return; }
     setSaving(true); setError('');
     try {
-      const endpoint = `/api/credentials/${provider}`;
-      const body = { tenant_id: TENANT, ...form };
-      const r = await fetch(`${API}${endpoint}`, {
+      const body = { tenant_id: TENANT, enabled: true };
+      p.fields.forEach(f => { body[f.name] = (form[f.name] || '').trim(); });
+      const r = await fetch(`/api/credentials/${provider}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      if (!r.ok) {
+        const resp = await r.json().catch(() => ({}));
+        throw new Error(typeof resp.detail === 'string' ? resp.detail : `${r.status} ${r.statusText}`);
+      }
       onSaved();
     } catch (e) {
       setError(e.message);
@@ -176,118 +238,181 @@ function AddModal({ provider, onClose, onSaved }) {
     }
   };
 
-  const Field = ({ label, name, type = 'text', placeholder = '', hint = '', textarea = false }) => (
-    <div>
-      <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-      {textarea ? (
-        <textarea
-          rows={4}
-          className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          placeholder={placeholder}
-          value={form[name]}
-          onChange={e => set(name, e.target.value)}
-        />
-      ) : (
-        <div className="relative">
-          <input
-            type={type === 'password' && !showSecret ? 'password' : 'text'}
-            className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder={placeholder}
-            value={form[name]}
-            onChange={e => set(name, e.target.value)}
-          />
-          {type === 'password' && (
-            <button
-              type="button"
-              onClick={() => setShowSecret(v => !v)}
-              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
-            >
-              {showSecret ? Icon.eyeOff : Icon.eye}
-            </button>
-          )}
-        </div>
-      )}
-      {hint && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
-    </div>
-  );
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box', fontSize: 12, padding: '7px 10px',
+    border: '1px solid var(--hairline)', borderRadius: 8, background: 'var(--surface)', color: 'var(--ink)',
+    fontFamily: 'inherit',
+  };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-800">
-            Add {provider === 'aws' ? 'AWS' : provider === 'azure' ? 'Azure' : 'GCP'} Configuration
-          </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
-        </div>
-
-        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
-          <Field label="Config Name" name="name" placeholder="AWS CUR – Production" />
-
-          {provider === 'aws' && (<>
-            <Field label="S3 Bucket" name="s3_bucket" placeholder="my-cur-bucket" />
-            <Field label="S3 Prefix" name="s3_prefix" placeholder="cur/reports (optional)" />
-            <Field label="IAM Role ARN" name="aws_role_arn" placeholder="arn:aws:iam::123456789:role/FinOpsReadRole"
-              hint="Cross-account role that grants s3:GetObject on the CUR bucket." />
-            <Field label="External ID" name="aws_external_id" placeholder="finops-external-id (optional)" />
-            <Field label="AWS Region" name="aws_region" placeholder="us-east-1" />
-          </>)}
-
-          {provider === 'azure' && (<>
-            <Field label="Azure Tenant ID (AAD)" name="azure_tenant_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-            <Field label="Client ID (App ID)" name="client_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-            <Field label="Client Secret" name="client_secret" type="password" placeholder="••••••••"
-              hint="Service Principal secret. Stored encrypted — never logged." />
-            <Field label="Subscription ID" name="subscription_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-            <Field label="Management Group ID" name="management_group_id" placeholder="Optional — for tenant-wide billing" />
-          </>)}
-
-          {provider === 'gcp' && (<>
-            <Field label="GCP Project ID" name="gcp_project_id" placeholder="my-gcp-project" />
-            <Field label="BigQuery Dataset" name="bigquery_dataset" placeholder="billing_export" />
-            <Field label="BigQuery Table" name="bigquery_table" placeholder="gcp_billing_export_v1" />
-            <Field label="Service Account JSON" name="service_account_json" textarea
-              placeholder='Paste your service account JSON here { "type": "service_account", ... }'
-              hint="Stored encrypted. The SA needs BigQuery Data Viewer + BigQuery Job User roles." />
-          </>)}
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{error}</div>
-          )}
-        </div>
-
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 border border-slate-200">
-            Cancel
-          </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="px-5 py-2 rounded-lg text-sm font-medium bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save Configuration'}
-          </button>
-        </div>
+    <div style={{ borderTop: '1px solid var(--hairline)', marginTop: 10, paddingTop: 12 }}>
+      {/* autoComplete off: prevent the browser autofilling saved logins into credential fields */}
+      <form autoComplete="off" onSubmit={e => e.preventDefault()}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {p.fields.map(f => (
+          <div key={f.name} style={{ gridColumn: f.textarea ? '1 / -1' : 'auto' }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>
+              {f.label}{f.required && <span style={{ color: 'var(--negative, #d64545)' }}> *</span>}
+            </label>
+            {f.textarea ? (
+              <textarea
+                rows={5} style={{ ...inputStyle, fontFamily: 'var(--font-num, monospace)', resize: 'vertical' }}
+                placeholder={f.placeholder} value={form[f.name]} onChange={e => set(f.name, e.target.value)}
+                autoComplete="off"
+              />
+            ) : (
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={f.secret && !reveal ? 'password' : 'text'}
+                  style={inputStyle} placeholder={f.placeholder}
+                  value={form[f.name]} onChange={e => set(f.name, e.target.value)}
+                  autoComplete={f.secret ? 'new-password' : 'off'}
+                  name={`finops_${provider}_${f.name}`}
+                />
+                {f.secret && (
+                  <button
+                    type="button"
+                    onClick={() => setReveal(r => !r)}
+                    style={{ position: 'absolute', right: 8, top: 6, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--muted)' }}
+                  >
+                    {reveal ? 'hide' : 'show'}
+                  </button>
+                )}
+              </div>
+            )}
+            {f.hint && <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>{f.hint}</div>}
+          </div>
+        ))}
       </div>
+
+      {error && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--negative, #d64545)', background: 'rgba(214,69,69,.08)', borderRadius: 8, padding: '8px 10px' }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+        <Btn onClick={onClose}>Cancel</Btn>
+        <Btn kind="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save & connect'}</Btn>
+      </div>
+      </form>
+
+      <SetupGuide provider={provider} />
     </div>
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
-export default function CredentialManager() {
-  const [data,    setData]    = useState(null);
+// ── Provider card ─────────────────────────────────────────────────────────────
+function ProviderSection({ provider, configs, loading, onRefresh }) {
+  const p = PROVIDERS[provider];
+  const [adding, setAdding] = useState(false);
+  const [testing, setTesting] = useState(null);
+  const [notice, setNotice] = useState('');
+
+  const test = async (id) => {
+    setTesting(id); setNotice('');
+    try {
+      const r = await fetch(`/api/credentials/${encodeURIComponent(id)}/test`, { method: 'POST' });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) setNotice(typeof body.detail === 'string' ? body.detail : 'Connection test failed.');
+    } finally {
+      setTesting(null);
+      onRefresh();
+    }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('Remove this configuration? This cannot be undone.')) return;
+    await fetch(`/api/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    onRefresh();
+  };
+
+  return (
+    <div className="card" style={{ padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ width: 10, height: 10, borderRadius: 3, background: p.accent, display: 'inline-block' }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>{p.label}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)' }}>{p.tagline}</div>
+        </div>
+        <Btn onClick={() => setAdding(a => !a)} kind={adding ? 'ghost' : 'primary'}>
+          {adding ? 'Close' : '+ Add configuration'}
+        </Btn>
+      </div>
+
+      {notice && (
+        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--negative, #d64545)' }}>{notice}</div>
+      )}
+
+      {/* Existing configs */}
+      <div style={{ marginTop: 10 }}>
+        {loading ? (
+          <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>Loading…</div>
+        ) : configs.length === 0 && !adding ? (
+          <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>
+            No configurations yet — add one to start ingesting {p.label} costs.
+          </div>
+        ) : configs.map(cfg => (
+          <div key={cfg.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--hairline)' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{cfg.name}</span>
+                <StatusPill status={cfg.test_status} />
+                {!cfg.enabled && <Tag tone="neutral">disabled</Tag>}
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {p.summary(cfg)}
+              </div>
+              {cfg.test_status === 'error' && cfg.test_message && (
+                <div style={{ fontSize: 11, color: 'var(--negative, #d64545)', marginTop: 3, fontFamily: 'var(--font-num, monospace)' }}>
+                  {cfg.test_message}
+                </div>
+              )}
+              {cfg.last_sync_at && (
+                <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>
+                  Last sync {new Date(cfg.last_sync_at).toLocaleString()}
+                </div>
+              )}
+            </div>
+            <Btn small onClick={() => test(cfg.id)} disabled={testing === cfg.id}>
+              {testing === cfg.id ? 'Testing…' : 'Test connection'}
+            </Btn>
+            <Btn small kind="danger" onClick={() => remove(cfg.id)}>Remove</Btn>
+          </div>
+        ))}
+      </div>
+
+      {adding && (
+        <AddConfigForm
+          provider={provider}
+          onClose={() => setAdding(false)}
+          onSaved={() => { setAdding(false); onRefresh(); }}
+        />
+      )}
+      {!adding && <SetupGuide provider={provider} />}
+    </div>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────────────────────
+export default function CredentialManager({ onNavigate }) {
+  const [data, setData] = useState({ aws: [], azure: [], gcp: [] });
   const [loading, setLoading] = useState(true);
-  const [modal,   setModal]   = useState(null);   // provider string
-  const [testing, setTesting] = useState(null);   // config_id being tested
-  const [error,   setError]   = useState('');
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(async () => {
-    setLoading(true);
+    setLoading(true); setLoadError('');
     try {
-      const r = await fetch(`${API}/api/credentials?tenant_id=${TENANT}`);
-      setData(await r.json());
+      const r = await fetch(`/api/credentials?tenant_id=${TENANT}`);
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const d = await r.json();
+      setData({
+        aws:   d.providers?.aws   || [],
+        azure: d.providers?.azure || [],
+        gcp:   d.providers?.gcp   || [],
+      });
     } catch (e) {
-      setError('Could not load configurations.');
+      setLoadError(`Could not load configurations (${e.message}). Is the backend running?`);
     } finally {
       setLoading(false);
     }
@@ -295,122 +420,53 @@ export default function CredentialManager() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleTest = async (configId) => {
-    setTesting(configId);
-    try {
-      await fetch(`${API}/api/credentials/${configId}/test?tenant_id=${TENANT}`, { method: 'POST' });
-      await load();
-    } finally {
-      setTesting(null);
-    }
-  };
-
-  const handleDelete = async (configId) => {
-    if (!confirm('Remove this configuration? This cannot be undone.')) return;
-    await fetch(`${API}/api/credentials/${configId}?tenant_id=${TENANT}`, { method: 'DELETE' });
-    await load();
-  };
-
-  const providers = ['aws', 'azure', 'gcp'];
-
-  // Count connected / total
-  const allConfigs = data ? [...(data.providers.aws || []), ...(data.providers.azure || []), ...(data.providers.gcp || [])] : [];
-  const connected  = allConfigs.filter(c => c.test_status === 'ok').length;
+  const total = data.aws.length + data.azure.length + data.gcp.length;
+  const connected = [...data.aws, ...data.azure, ...data.gcp].filter(c => c.test_status === 'ok').length;
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-4xl mx-auto px-6 py-8">
+    <div className="lumen" style={{ height: '100vh' }}>
+      <Sidebar active="settings" onNavigate={onNavigate} />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <Topbar crumbs={['Acme Inc.', 'Settings', 'Cloud Credentials']} />
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px' }}>
+          <div style={{ maxWidth: 860, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">Cloud Provider Credentials</h1>
-          <p className="text-slate-500 mt-1">
-            Connect your cloud providers to start ingesting cost data. All credentials are encrypted at rest.
-          </p>
-          {allConfigs.length > 0 && (
-            <div className="mt-3 inline-flex items-center gap-2 text-sm">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-slate-600">{connected} of {allConfigs.length} configured providers connected</span>
+            <div>
+              <div className="section-title" style={{ fontSize: 15 }}>Cloud provider credentials</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                Connect AWS, Azure, and GCP billing data. Credentials are encrypted at rest, used server-side only,
+                and require read-only billing access.
+                {total > 0 && <> · <b>{connected}/{total}</b> configurations connected</>}
+              </div>
             </div>
-          )}
-        </div>
 
-        {/* Info banner */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-4 mb-6 text-sm text-blue-800">
-          <strong>Data flow:</strong> AWS CUR → S3 → 5-min poll → FOCUS normalisation → dashboards.
-          Azure &amp; GCP billing exports are synced hourly via their respective APIs.
-          No data leaves your environment — credentials are used server-side only.
-        </div>
+            {loadError && (
+              <div className="card" style={{ padding: '10px 14px', fontSize: 12, color: 'var(--negative, #d64545)' }}>
+                {loadError}
+              </div>
+            )}
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-3 mb-6 text-sm text-red-700">{error}</div>
-        )}
+            {/* Data-flow explainer */}
+            <div className="card" style={{ padding: '10px 14px', fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5 }}>
+              <b style={{ color: 'var(--ink)' }}>How ingestion works:</b>{' '}
+              AWS CUR files land in your S3 bucket and are polled on schedule · Azure costs are pulled from the
+              Cost Management API · GCP costs are queried from your BigQuery billing export. Everything is
+              normalized to FOCUS and appears in dashboards within one sync cycle.
+            </div>
 
-        {loading ? (
-          <div className="flex items-center gap-3 text-slate-400 py-12 justify-center">
-            <div className="w-5 h-5 border-2 border-slate-300 border-t-blue-500 rounded-full animate-spin" />
-            Loading configurations…
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {providers.map(p => (
-              <ProviderCard
-                key={p}
-                provider={p}
-                configs={(data?.providers?.[p] || []).map(c => ({ ...c, provider: p }))}
-                onAdd={setModal}
-                onTest={handleTest}
-                onDelete={handleDelete}
-                testing={testing}
+            {['aws', 'azure', 'gcp'].map(k => (
+              <ProviderSection
+                key={k}
+                provider={k}
+                configs={data[k]}
+                loading={loading}
+                onRefresh={load}
               />
             ))}
-          </div>
-        )}
 
-        {/* Setup guide */}
-        <div className="mt-8 rounded-xl border border-slate-200 bg-white">
-          <div className="px-5 py-4 border-b border-slate-100">
-            <h3 className="font-semibold text-slate-700 text-sm">Quick Setup Guide</h3>
-          </div>
-          <div className="px-5 py-4 grid grid-cols-1 md:grid-cols-3 gap-5 text-sm">
-            <div>
-              <div className="font-medium text-orange-600 mb-1.5">AWS</div>
-              <ol className="text-slate-500 space-y-1 list-decimal list-inside text-xs">
-                <li>Enable Cost & Usage Reports in Billing console</li>
-                <li>Choose Parquet format, hourly granularity</li>
-                <li>Create cross-account IAM role with s3:GetObject</li>
-                <li>Paste the Role ARN and S3 bucket above</li>
-              </ol>
-            </div>
-            <div>
-              <div className="font-medium text-blue-600 mb-1.5">Azure</div>
-              <ol className="text-slate-500 space-y-1 list-decimal list-inside text-xs">
-                <li>Register an App in Azure Active Directory</li>
-                <li>Assign Cost Management Reader to the subscription</li>
-                <li>Create a client secret under Certificates & Secrets</li>
-                <li>Paste Tenant ID, Client ID, Secret, and Subscription above</li>
-              </ol>
-            </div>
-            <div>
-              <div className="font-medium text-teal-600 mb-1.5">GCP</div>
-              <ol className="text-slate-500 space-y-1 list-decimal list-inside text-xs">
-                <li>Enable Cloud Billing Export to BigQuery</li>
-                <li>Create a Service Account in IAM</li>
-                <li>Grant BigQuery Data Viewer + Job User roles</li>
-                <li>Download JSON key and paste it above</li>
-              </ol>
-            </div>
           </div>
         </div>
       </div>
-
-      {modal && (
-        <AddModal
-          provider={modal}
-          onClose={() => setModal(null)}
-          onSaved={() => { setModal(null); load(); }}
-        />
-      )}
     </div>
   );
 }

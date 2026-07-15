@@ -177,6 +177,11 @@ def start_scheduler(settings: Settings) -> AsyncIOScheduler | None:
     scheduler.add_job(run_gcp_ingest, "interval", minutes=gcp_ingest_interval, args=[settings], id="gcp_ingest", replace_existing=True)
 
     scheduler.add_job(run_focus_transform, "interval", minutes=focus_transform_interval, args=[settings], id="focus_transform", replace_existing=True)
+
+    # Budget alert delivery (hourly) — dedupes per (budget, threshold, period)
+    from .notifications import run_budget_alert_check
+    scheduler.add_job(run_budget_alert_check, "interval", minutes=60, args=[settings], id="budget_alert_check", replace_existing=True)
+
     scheduler.start()
     return scheduler
 

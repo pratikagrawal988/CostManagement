@@ -11,21 +11,24 @@ def get_api_router():
     except ImportError as e:
         print(f"⚠️  Cost router import error: {e}")
     
+    # NOTE: aws/azure/gcp route modules already declare their own prefix
+    # (e.g. APIRouter(prefix="/azure")). Passing prefix= again here produced
+    # double-prefixed paths like /api/v1/azure/azure/ingest-config.
     try:
         from .aws.routes import router as aws_router
-        router.include_router(aws_router, prefix="/aws", tags=["aws"])
+        router.include_router(aws_router, tags=["aws"])
     except ImportError as e:
         print(f"⚠️  AWS router import error: {e}")
-    
+
     try:
         from .azure.routes import router as azure_router
-        router.include_router(azure_router, prefix="/azure", tags=["azure"])
+        router.include_router(azure_router, tags=["azure"])
     except ImportError as e:
         print(f"⚠️  Azure router import error: {e}")
-    
+
     try:
         from .gcp.routes import router as gcp_router
-        router.include_router(gcp_router, prefix="/gcp", tags=["gcp"])
+        router.include_router(gcp_router, tags=["gcp"])
     except ImportError as e:
         print(f"⚠️  GCP router import error: {e}")
     
