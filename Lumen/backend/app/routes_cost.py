@@ -24,7 +24,7 @@ from sqlalchemy import func, and_
 from .auth import get_optional_tenant
 from .database import SessionLocal, get_db
 from .models import (
-    CostAggregation, CostDetail, CostIngestConfig, FocusCost,
+    CostAggregation, CostDetail, FocusCost,
     JobRun, utcnow, new_id
 )
 
@@ -333,138 +333,11 @@ def get_ai_services(
     }
 
 
-# ============================================================================
-# Ingest Configuration
-# ============================================================================
-
-@router.get("/ingest-config")
-def list_ingest_configs(
-    tenant_id: str = Depends(get_optional_tenant),
-    db: Session = Depends(get_db),
-):
-    """
-    List all cost ingest configurations.
-
-    Returns S3 bucket, role ARN, and last test status for each config.
-    """
-    query = db.query(CostIngestConfig)
-
-    if tenant_id:
-        query = query.filter(CostIngestConfig.tenant_id == tenant_id)
-
-    configs = query.all()
-
-    return {
-        "count": len(configs),
-        "configs": [
-            {
-                "id": c.id,
-                "tenant_id": c.tenant_id,
-                "s3_bucket": c.s3_bucket,
-                "s3_prefix": c.s3_prefix,
-                "aws_role_arn": c.aws_role_arn,
-                "enabled": c.enabled,
-                "last_tested_at": c.last_tested_at.isoformat() if c.last_tested_at else None,
-                "test_status": c.test_status,
-                "test_message": c.test_message,
-                "created_at": c.created_at.isoformat(),
-            }
-            for c in configs
-        ],
-    }
-
-
-@router.post("/ingest-config")
-def create_ingest_config(
-    tenant_id: str = Depends(get_optional_tenant),
-    s3_bucket: str = Query(...),
-    s3_prefix: str = Query(...),
-    aws_role_arn: str = Query(...),
-    aws_external_id: str = Query(...),
-    enabled: bool = Query(True),
-    db: Session = Depends(get_db),
-):
-    """
-    Create a new cost ingest configuration.
-
-    Configures S3 access for CUR ingestion via cross-account IAM role.
-    """
-    # Check for duplicate
-    existing = db.query(CostIngestConfig).filter(
-        CostIngestConfig.tenant_id == tenant_id,
-        CostIngestConfig.s3_bucket == s3_bucket,
-    ).one_or_none()
-
-    if existing:
-        raise HTTPException(status_code=409, detail="Configuration already exists")
-
-    config = CostIngestConfig(
-        id=new_id(),
-        tenant_id=tenant_id,
-        s3_bucket=s3_bucket,
-        s3_prefix=s3_prefix,
-        aws_role_arn=aws_role_arn,
-        aws_external_id=aws_external_id,
-        enabled=enabled,
-        test_status="pending",
-        created_at=utcnow(),
-        updated_at=utcnow(),
-    )
-    db.add(config)
-    db.commit()
-    db.refresh(config)
-
-    return {
-        "status": "created",
-        "config_id": config.id,
-        "tenant_id": config.tenant_id,
-        "s3_bucket": config.s3_bucket,
-    }
-
-
-@router.patch("/ingest-config/{config_id}")
-def update_ingest_config(
-    config_id: str,
-    s3_bucket: Optional[str] = Query(None),
-    s3_prefix: Optional[str] = Query(None),
-    aws_role_arn: Optional[str] = Query(None),
-    aws_external_id: Optional[str] = Query(None),
-    enabled: Optional[bool] = Query(None),
-    db: Session = Depends(get_db),
-):
-    """
-    Update an ingest configuration.
-
-    Only provided fields are updated; others remain unchanged.
-    """
-    config = db.query(CostIngestConfig).filter(
-        CostIngestConfig.id == config_id
-    ).one_or_none()
-
-    if not config:
-        raise HTTPException(status_code=404, detail="Configuration not found")
-
-    if s3_bucket:
-        config.s3_bucket = s3_bucket
-    if s3_prefix:
-        config.s3_prefix = s3_prefix
-    if aws_role_arn:
-        config.aws_role_arn = aws_role_arn
-    if aws_external_id:
-        config.aws_external_id = aws_external_id
-    if enabled is not None:
-        config.enabled = enabled
-
-    config.updated_at = utcnow()
-    db.commit()
-    db.refresh(config)
-
-    return {
-        "status": "updated",
-        "config_id": config.id,
-        "updated_at": config.updated_at.isoformat(),
-    }
-
+# Ingest configuration CRUD lives in routes_credentials.py (/api/credentials) —
+# it encrypts secrets at rest and is the only path the frontend actually
+# calls. The duplicate, plaintext-oriented /api/cost/ingest-config endpoints
+# that used to live here were dead (only caller was the removed
+# AdminCostSetup.jsx) and have been removed.
 
 # ============================================================================
 # Job Status

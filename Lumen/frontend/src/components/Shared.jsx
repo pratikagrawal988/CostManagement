@@ -529,28 +529,6 @@ export function ProgressBar({ value, max, color = 'var(--accent)', height = 8, m
   );
 }
 
-// WIP placeholder for unbuilt screens
-export function WIPScreen({ title, icon = 'bulb', description }) {
-  return (
-    <div style={{
-      flex: 1, display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      gap: 12, color: 'var(--muted)', padding: 40,
-    }}>
-      <div style={{ fontSize: 40 }}>🚧</div>
-      <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--ink)' }}>{title}</div>
-      <div style={{ fontSize: 13, textAlign: 'center', maxWidth: 360 }}>
-        {description || 'This screen is coming soon. Data infrastructure is ready — UI is work in progress.'}
-      </div>
-      <span style={{
-        padding: '3px 10px', borderRadius: 4,
-        background: 'var(--warning-soft)', color: 'var(--warning)',
-        fontFamily: 'var(--font-num)', fontSize: 11, fontWeight: 500,
-      }}>WIP</span>
-    </div>
-  );
-}
-
 // Utility: generate deterministic mock series (fallback when API loading)
 export function genCostSeries(base, days, drift = 0.02, noise = 0.08, weeklyDip = 0.18, seed = 1) {
   let s = seed;

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # FinOps Recommendation Engine
 
 Self-contained production-style implementation of the FinOps Recommendation Engine. It includes a FastAPI backend, PostgreSQL schema, seeded recommendation catalog import, deterministic evaluator/backtest pipeline, provider registry, scheduled ingestion jobs, and a React console for recommendations and findings.
@@ -21,7 +20,7 @@ docker compose up --build
 
 Then open:
 
-- Frontend: `http://127.0.0.1:5174`
+- Frontend: `http://127.0.0.1:5175`
 - Backend API: `http://127.0.0.1:8088/docs`
 
 The app seeds a demo tenant and customers on startup. If real provider credentials are not configured, connectors run deterministic sample ingestion so the full workflow is usable locally.
@@ -51,6 +50,3 @@ Recommendations are live when they are imported into the database with `enabled=
 - Configure provider credentials via secrets; do not commit credentials.
 - Run scheduler workers as a separate service if evaluation volume grows beyond one process.
 - Use the event log as the audit source of truth; finding/action/outcome state is a projection.
-=======
-# CloudOptimization
->>>>>>> origin/main

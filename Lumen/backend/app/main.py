@@ -84,8 +84,6 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 from .routes_cost        import router as cost_router
-from .routes_azure       import router as azure_router
-from .routes_gcp         import router as gcp_router
 from .routes_ai          import router as ai_router
 from .routes_credentials import router as credentials_router
 from .routes_auth        import router as auth_router
@@ -102,8 +100,6 @@ from .notifications import router as notifications_router
 
 app.include_router(auth_router)
 app.include_router(cost_router)
-app.include_router(azure_router)
-app.include_router(gcp_router)
 app.include_router(ai_router)
 app.include_router(credentials_router)
 app.include_router(overview_router)
