@@ -86,6 +86,10 @@ providers:
       metrics: 15m
       billing: 24h
       native_recommendations: 12h
+    setup_steps:
+      - Deploy Kubecost/OpenCost into each monitored cluster.
+      - Expose the allocation API and issue a read-only API key.
+      - Confirm namespace/label scoping matches your chargeback model.
 
   - provider_id: datadog
     name: Datadog
@@ -102,6 +106,10 @@ providers:
     refresh_intervals:
       metrics: 15m
       native_recommendations: 24h
+    setup_steps:
+      - Generate a Datadog API key and Application key with metrics read scope.
+      - Enable the Cloud Cost Management integration for connected cloud accounts.
+      - Verify custom metrics and K8s resource tags are being ingested.
 
   - provider_id: litellm
     name: LiteLLM / AI Gateway
@@ -118,6 +126,10 @@ providers:
     health_probe: usage_summary
     refresh_intervals:
       metrics: 5m
+    setup_steps:
+      - Issue a LiteLLM proxy API key with usage-read access.
+      - Point the gateway's usage_summary endpoint at monitored projects/teams.
+      - Confirm token and cache-hit metrics are flowing before enabling recommendations.
 
   - provider_id: jira
     name: Jira
@@ -130,6 +142,10 @@ providers:
     health_probe: myself
     refresh_intervals:
       delivery_status: 15m
+    setup_steps:
+      - Create an API token for a service account with project read/write access.
+      - Confirm project_key and issue_type mappings for optimization tickets.
+      - Validate the /myself endpoint returns 200 before enabling ticket delivery.
 
   - provider_id: servicenow
     name: ServiceNow
@@ -142,6 +158,10 @@ providers:
     health_probe: table_api
     refresh_intervals:
       delivery_status: 15m
+    setup_steps:
+      - Create a dedicated integration user with Table API access.
+      - Scope access to the target assignment_group and catalog_item.
+      - Test a Table API call before enabling ticket delivery.
 
   - provider_id: slack
     name: Slack
@@ -154,6 +174,10 @@ providers:
     health_probe: webhook_post
     refresh_intervals:
       delivery_status: 15m
+    setup_steps:
+      - Create an Incoming Webhook in the target Slack workspace/channel.
+      - Store the webhook URL as SLACK_WEBHOOK_URL.
+      - Send a test post to confirm delivery before enabling alerts.
 
   - provider_id: teams
     name: Microsoft Teams
@@ -166,3 +190,7 @@ providers:
     health_probe: webhook_post
     refresh_intervals:
       delivery_status: 15m
+    setup_steps:
+      - Create an Incoming Webhook connector in the target Teams channel.
+      - Store the webhook URL as TEAMS_WEBHOOK_URL.
+      - Send a test post to confirm delivery before enabling alerts.

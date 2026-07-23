@@ -57,6 +57,11 @@ PERMISSIONS: dict[str, set[str]] = {
     # Recommendations
     "recommendations:read":  {"admin", "finops_engineer", "analyst"},
     "recommendations:write": {"admin", "finops_engineer"},
+    # Tag management: policy, normalization, predictions
+    "tags:read":          {"admin", "finops_engineer", "finance_manager", "team_lead", "analyst"},
+    "tags:write":          {"admin", "finops_engineer"},
+    # Databricks dashboard (read-only; data arrives via the scheduled connector, no user-writable config yet)
+    "databricks:read":    {"admin", "finops_engineer", "finance_manager", "team_lead", "analyst"},
 }
 
 

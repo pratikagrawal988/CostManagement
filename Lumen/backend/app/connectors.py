@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,8 @@ import yaml
 from sqlalchemy.orm import Session
 
 from .models import ProviderConnection, ProductRate, SignalSample, utcnow
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,14 +29,23 @@ class ProviderManifest:
     recommendation_imports: list[str]
     health_probe: str
     refresh_intervals: dict[str, str]
-    setup_steps: list[str]
+    setup_steps: list[str] = field(default_factory=list)
 
 
 def load_provider_manifests(path: Path) -> list[ProviderManifest]:
     if not path.exists():
         return []
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return [ProviderManifest(**provider) for provider in data.get("providers", [])]
+    manifests: list[ProviderManifest] = []
+    for provider in data.get("providers", []):
+        try:
+            manifests.append(ProviderManifest(**provider))
+        except TypeError:
+            logger.exception(
+                "Skipping malformed provider manifest entry: %s",
+                provider.get("provider_id", "<unknown>"),
+            )
+    return manifests
 
 
 class Connector:

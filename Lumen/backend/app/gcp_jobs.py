@@ -19,7 +19,9 @@ from google.oauth2 import service_account
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
+from .crypto import decrypt_secret
 from .database import SessionLocal
+from .jobs import tags_lookup, apply_tag_overrides
 from .models import (
     GcpCostIngestConfig, CostDetail, CostAggregation,
     FocusCost, JobRun, ProductCategory, utcnow
@@ -43,9 +45,13 @@ def get_bigquery_client(config: GcpCostIngestConfig) -> bigquery.Client:
         RuntimeError: If authentication fails
     """
     try:
-        # Decrypt service account key (in production, use Secret Manager)
-        # For now, assumes key is stored as plaintext JSON
-        key_dict = json.loads(config.service_account_key_encrypted)
+        # service_account key lives in the encrypted `config` JSON blob (see
+        # crypto.py and routes_credentials.py's upsert_gcp_credential) — never
+        # as a plaintext column.
+        sa_json = decrypt_secret((config.config or {}).get("encrypted_sa_json", ""))
+        if not sa_json:
+            raise RuntimeError("No service account key configured for this GCP connection")
+        key_dict = json.loads(sa_json)
 
         credentials = service_account.Credentials.from_service_account_info(key_dict)
         client = bigquery.Client(
@@ -153,7 +159,7 @@ async def _ingest_for_gcp_config(db: Session, config: GcpCostIngestConfig) -> di
         client = get_bigquery_client(config)
 
         # Query cost data from last sync date
-        timeframe_start = (config.last_synced_at or utcnow() - timedelta(days=1)).date()
+        timeframe_start = (config.last_sync_at or utcnow() - timedelta(days=1)).date()
         timeframe_end = utcnow().date()
 
         # BigQuery SQL for cost data
@@ -168,7 +174,7 @@ async def _ingest_for_gcp_config(db: Session, config: GcpCostIngestConfig) -> di
             cost as cost_amount,
             project.id as project_id,
             labels
-        FROM `{config.gcp_project_id}.{config.bq_dataset_id}.{config.bq_table_id}`
+        FROM `{config.gcp_project_id}.{config.bigquery_dataset}.{config.bigquery_table}`
         WHERE CAST(SUBSTR(usage_start_time, 1, 10) AS DATE) >= '{timeframe_start}'
           AND CAST(SUBSTR(usage_start_time, 1, 10) AS DATE) < '{timeframe_end}'
           AND cost > 0
@@ -181,7 +187,7 @@ async def _ingest_for_gcp_config(db: Session, config: GcpCostIngestConfig) -> di
         records = _parse_gcp_results(db, results, config)
 
         # Update last sync time
-        config.last_synced_at = utcnow()
+        config.last_sync_at = utcnow()
         config.test_status = "success"
         config.test_message = f"Synced {records['inserted'] + records['updated']} records"
         db.commit()
@@ -258,14 +264,20 @@ def _parse_gcp_results(
 
                 if existing:
                     # Update existing record
-                    existing.cost_after_discount = cost_amount
-                    existing.usage_quantity = usage_amount
+                    existing.unblended_cost = float(cost_amount)
+                    existing.blended_cost = float(cost_amount)
+                    existing.amortised_cost = float(cost_amount)
+                    existing.list_cost = float(cost_amount)
+                    existing.usage_quantity = float(usage_amount)
                     existing.tags = tags
                     existing.parsed_at = utcnow()
                     db.add(existing)
                     updated_count += 1
                 else:
-                    # Create new record
+                    # Create new record. The BigQuery billing export's `cost`
+                    # column is a single figure (no separate blended/unblended/
+                    # amortized breakdown like AWS CUR), so all three cost
+                    # columns carry the same value here.
                     detail = CostDetail(
                         tenant_id=config.tenant_id,
                         account_id=project_id,
@@ -275,13 +287,12 @@ def _parse_gcp_results(
                         usage_type=sku_description,
                         usage_start_date=usage_date,
                         usage_end_date=usage_date,
-                        usage_quantity=usage_amount,
-                        rate=Decimal(0),
+                        usage_quantity=float(usage_amount),
                         currency="USD",
-                        cost_before_discount=cost_amount,
-                        discount=Decimal(0),
-                        cost_after_discount=cost_amount,
-                        cost_with_tax=cost_amount,
+                        unblended_cost=float(cost_amount),
+                        blended_cost=float(cost_amount),
+                        amortised_cost=float(cost_amount),
+                        list_cost=float(cost_amount),
                         resource_id=resource_location,
                         tags=tags,
                         sourced_from="gcp",
@@ -337,13 +348,12 @@ def _parse_gcp_results(
                             usage_type=sku_description,
                             usage_start_date=usage_date,
                             usage_end_date=usage_date,
-                            usage_quantity=usage_amount,
-                            rate=Decimal(0),
+                            usage_quantity=float(usage_amount),
                             currency="USD",
-                            cost_before_discount=cost_amount,
-                            discount=Decimal(0),
-                            cost_after_discount=cost_amount,
-                            cost_with_tax=cost_amount,
+                            unblended_cost=float(cost_amount),
+                            blended_cost=float(cost_amount),
+                            amortised_cost=float(cost_amount),
+                            list_cost=float(cost_amount),
                             resource_id=resource_location,
                             tags={"ProjectId": project_id, "Location": resource_location},
                             sourced_from="gcp",
@@ -405,45 +415,65 @@ async def run_gcp_focus_transform(settings: Settings) -> dict[str, Any]:
                         service_category = category_mapping.category if category_mapping else "Other"
                         usage_unit = category_mapping.unit_type if category_mapping else "hour"
 
-                        # Check for existing FOCUS record
+                        tags = apply_tag_overrides(db, tenant_id, detail.resource_id, detail.tags or {})
+
+                        # Check for existing FOCUS record (same grain as AWS: one
+                        # row per sub-account + service + SKU + region + day)
                         existing = db.query(FocusCost).filter(
                             FocusCost.tenant_id == tenant_id,
-                            FocusCost.account_id == detail.account_id,
+                            FocusCost.sub_account_id == detail.account_id,
                             FocusCost.service_name == detail.service,
-                            FocusCost.region == detail.region,
+                            FocusCost.region_id == detail.region,
                             FocusCost.billing_period_start == detail.usage_start_date,
                         ).one_or_none()
 
-                        chargeback_entity = (
-                            detail.tags.get("CostCenter", "")
-                            or detail.tags.get("Team", "")
-                            or detail.tags.get("Environment", "default")
-                        )
+                        list_unit_price = (detail.unblended_cost / detail.usage_quantity) if detail.usage_quantity else 0.0
 
                         if existing:
-                            existing.billed_cost = detail.cost_after_discount
+                            existing.billed_cost = detail.blended_cost
+                            existing.effective_cost = detail.amortised_cost
+                            existing.list_cost = detail.list_cost
                             existing.usage_quantity = detail.usage_quantity
-                            existing.synth_date = utcnow()
+                            existing.list_unit_price = list_unit_price
+                            existing.tags = tags
+                            existing.x_team = tags_lookup(tags, "Team", "team_name")
+                            existing.x_cost_center = tags_lookup(tags, "CostCenter", "cost_center")
+                            existing.x_app_id = tags_lookup(tags, "AppId", "Application", "app")
+                            existing.x_environment = tags_lookup(tags, "Environment", "env", default="unknown")
+                            existing.transformed_at = utcnow()
                             db.add(existing)
                         else:
                             focus = FocusCost(
                                 tenant_id=tenant_id,
-                                account_id=detail.account_id,
+                                billing_account_id=detail.account_id,
+                                sub_account_id=detail.account_id,
                                 billing_period_start=detail.usage_start_date,
-                                invoice_issuer="gcp",
+                                charge_period_start=f"{detail.usage_start_date}T00:00:00Z",
+                                charge_category="Usage",
+                                invoice_issuer_name="Google Cloud",
+                                provider_name="GCP",
+                                publisher_name="Google",
                                 service_name=detail.service,
                                 service_category=service_category,
-                                sku=detail.sku,
-                                region=detail.region,
+                                sku_id=detail.sku,
+                                region_id=detail.region,
+                                region_name=detail.region,
                                 usage_quantity=detail.usage_quantity,
                                 usage_unit=usage_unit,
-                                unit_price=Decimal(0),
-                                billed_cost=detail.cost_after_discount,
+                                pricing_category="Standard",
+                                list_unit_price=list_unit_price,
+                                list_cost=detail.list_cost,
+                                billed_cost=detail.blended_cost,
+                                effective_cost=detail.amortised_cost,
                                 currency="USD",
-                                tags=detail.tags,
+                                tags=tags,
                                 resource_id=detail.resource_id,
-                                chargeback_entity=chargeback_entity,
-                                synth_date=utcnow(),
+                                x_team=tags_lookup(tags, "Team", "team_name"),
+                                x_cost_center=tags_lookup(tags, "CostCenter", "cost_center"),
+                                x_app_id=tags_lookup(tags, "AppId", "Application", "app"),
+                                x_environment=tags_lookup(tags, "Environment", "env", default="unknown"),
+                                source_detail_id=detail.id,
+                                transformed_at=utcnow(),
                             )
                             db.add(focus)
                         focus_count += 1

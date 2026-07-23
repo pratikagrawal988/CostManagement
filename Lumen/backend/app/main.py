@@ -95,6 +95,8 @@ from .routes_admin       import router as admin_router
 from .routes_reco        import router as reco_router
 from .routes_users       import router as users_router, audit_router
 from .routes_budgets     import router as budgets_router
+from .routes_tags        import router as tags_router
+from .routes_databricks  import router as databricks_router
 from .cost_recommendations import router as cost_reco_router
 from .notifications import router as notifications_router
 
@@ -111,6 +113,8 @@ app.include_router(reco_router)
 app.include_router(users_router)
 app.include_router(audit_router)
 app.include_router(budgets_router)
+app.include_router(tags_router)
+app.include_router(databricks_router)
 app.include_router(cost_reco_router)
 app.include_router(notifications_router)
 

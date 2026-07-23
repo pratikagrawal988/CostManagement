@@ -13,6 +13,7 @@ from .settings import Settings
 from .seed_cost_mappings import seed_all_mappings
 from .seed_ai_demo import seed_ai_demo_data
 from .seed_focus_csp import seed_csp_focus_data
+from .seed_databricks_demo import seed_databricks_demo
 from .focus_aggregator import build_aggregations_from_focus
 
 DEMO_EMAIL    = "admin@demo.local"
@@ -30,6 +31,7 @@ async def seed_everything(db: Session, settings: Settings) -> dict:
     cost_mappings = seed_all_mappings("tenant-demo")
     ai_demo = seed_ai_demo_data(db, "tenant-demo")
     csp_demo = seed_csp_focus_data(db, "tenant-demo")
+    databricks_demo = seed_databricks_demo(db, "tenant-demo")
     agg_result = build_aggregations_from_focus(db, "tenant-demo")
     return {
         "catalog": catalog_result,
@@ -37,6 +39,7 @@ async def seed_everything(db: Session, settings: Settings) -> dict:
         "cost_mappings": cost_mappings,
         "ai_demo": ai_demo,
         "csp_demo": csp_demo,
+        "databricks_demo": databricks_demo,
         "aggregations": agg_result,
     }
 

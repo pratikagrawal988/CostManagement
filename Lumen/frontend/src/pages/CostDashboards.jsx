@@ -10,7 +10,18 @@
 
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import axios from 'axios';
+import { Sidebar, Topbar } from '../components/Shared.jsx';
+import '../styles/tokens.css';
+import '../styles/cost-dashboards.css';
+
+const API = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8088';
+
+async function getJSON(path, params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${API}${path}${qs ? `?${qs}` : ''}`);
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return res.json();
+}
 
 // ============================================================================
 // Finance Portal - CFO/Finance View
@@ -24,15 +35,11 @@ export function FinancePortal() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const summaryRes = await axios.get('/api/cost/summary', {
-          params: { tenant_id: 'tenant-demo', days: 90 }
-        });
-        setSummary(summaryRes.data);
+        const summaryData = await getJSON('/api/cost/summary', { tenant_id: 'tenant-demo', days: 90 });
+        setSummary(summaryData);
 
-        const dailyRes = await axios.get('/api/cost/daily', {
-          params: { tenant_id: 'tenant-demo' }
-        });
-        setDailyCosts(dailyRes.data.data || []);
+        const dailyData = await getJSON('/api/cost/daily', { tenant_id: 'tenant-demo' });
+        setDailyCosts(dailyData.data || []);
 
         setLoading(false);
       } catch (error) {
@@ -145,15 +152,11 @@ export function FinOpsAnalytics() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const costsRes = await axios.get('/api/cost/daily', {
-          params: { tenant_id: 'tenant-demo' }
-        });
-        setCosts(costsRes.data.data || []);
+        const costsData = await getJSON('/api/cost/daily', { tenant_id: 'tenant-demo' });
+        setCosts(costsData.data || []);
 
-        const aiRes = await axios.get('/api/ai-services', {
-          params: { tenant_id: 'tenant-demo', days: 30 }
-        });
-        setAiServices(aiRes.data.ai_services || []);
+        const aiData = await getJSON('/api/cost/ai-services', { tenant_id: 'tenant-demo', days: 30 });
+        setAiServices(aiData.ai_services || []);
 
         setLoading(false);
       } catch (error) {
@@ -290,14 +293,13 @@ export function TeamCostDashboard() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await axios.get('/api/cost/daily', {
-          params: { tenant_id: 'tenant-demo' }
-        });
+        const data = await getJSON('/api/cost/daily', { tenant_id: 'tenant-demo' });
 
-        // Group by cost_category/team
+        // Group by category (used as a team/project proxy — no dedicated
+        // team dimension is ingested yet)
         const grouped = {};
-        res.data.data?.forEach(cost => {
-          const team = cost.cost_category || 'unallocated';
+        data.data?.forEach(cost => {
+          const team = cost.category || 'unallocated';
           if (!grouped[team]) {
             grouped[team] = { name: team, cost: 0, resources: 0 };
           }
@@ -403,10 +405,8 @@ export function ExecutiveSummary() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await axios.get('/api/cost/summary', {
-          params: { tenant_id: 'tenant-demo', days: 365 }
-        });
-        setSummary(res.data);
+        const data = await getJSON('/api/cost/summary', { tenant_id: 'tenant-demo', days: 365 });
+        setSummary(data);
         setLoading(false);
       } catch (error) {
         console.error('Failed to fetch summary:', error);
@@ -531,43 +531,49 @@ export function ExecutiveSummary() {
 // Dashboard Router
 // ============================================================================
 
-export function CostDashboardRouter() {
+export function CostDashboardRouter({ onNavigate }) {
   const [activeTab, setActiveTab] = useState('executive');
 
   return (
-    <div className="dashboard-router">
-      <div className="tab-navigation">
-        <button
-          className={`tab ${activeTab === 'executive' ? 'active' : ''}`}
-          onClick={() => setActiveTab('executive')}
-        >
-          Executive Summary
-        </button>
-        <button
-          className={`tab ${activeTab === 'finance' ? 'active' : ''}`}
-          onClick={() => setActiveTab('finance')}
-        >
-          Finance Portal
-        </button>
-        <button
-          className={`tab ${activeTab === 'finops' ? 'active' : ''}`}
-          onClick={() => setActiveTab('finops')}
-        >
-          FinOps Analytics
-        </button>
-        <button
-          className={`tab ${activeTab === 'team' ? 'active' : ''}`}
-          onClick={() => setActiveTab('team')}
-        >
-          Team Dashboard
-        </button>
-      </div>
+    <div className="lumen" style={{ height: '100vh' }}>
+      <Sidebar active="reports" onNavigate={onNavigate} />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' }}>
+        <Topbar crumbs={['Workspace', 'Reports']} />
+        <div className="dashboard-router">
+          <div className="tab-navigation">
+            <button
+              className={`tab ${activeTab === 'executive' ? 'active' : ''}`}
+              onClick={() => setActiveTab('executive')}
+            >
+              Executive Summary
+            </button>
+            <button
+              className={`tab ${activeTab === 'finance' ? 'active' : ''}`}
+              onClick={() => setActiveTab('finance')}
+            >
+              Finance Portal
+            </button>
+            <button
+              className={`tab ${activeTab === 'finops' ? 'active' : ''}`}
+              onClick={() => setActiveTab('finops')}
+            >
+              FinOps Analytics
+            </button>
+            <button
+              className={`tab ${activeTab === 'team' ? 'active' : ''}`}
+              onClick={() => setActiveTab('team')}
+            >
+              Team Dashboard
+            </button>
+          </div>
 
-      <div className="tab-content">
-        {activeTab === 'executive' && <ExecutiveSummary />}
-        {activeTab === 'finance' && <FinancePortal />}
-        {activeTab === 'finops' && <FinOpsAnalytics />}
-        {activeTab === 'team' && <TeamCostDashboard />}
+          <div className="tab-content">
+            {activeTab === 'executive' && <ExecutiveSummary />}
+            {activeTab === 'finance' && <FinancePortal />}
+            {activeTab === 'finops' && <FinOpsAnalytics />}
+            {activeTab === 'team' && <TeamCostDashboard />}
+          </div>
+        </div>
       </div>
     </div>
   );

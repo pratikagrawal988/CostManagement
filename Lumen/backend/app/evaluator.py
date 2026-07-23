@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from operator import eq, ge, gt, le, lt, ne
-from typing import Any
+from typing import Any, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -12,6 +12,20 @@ from .models import Finding, Hypothesis, ProductRate, RecommendationDefinition, 
 
 
 OPERATORS = {"<": lt, "<=": le, ">": gt, ">=": ge, "==": eq, "!=": ne}
+
+
+def _as_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize to a tz-aware (UTC) datetime.
+
+    SQLite doesn't preserve timezone info even for ``DateTime(timezone=True)``
+    columns, so values round-tripped through it come back naive. Postgres
+    (production) round-trips them tz-aware already. Assume naive == UTC (all
+    writes go through ``utcnow()``) so comparisons/subtraction never raise
+    "can't compare/subtract offset-naive and offset-aware datetimes".
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 ACTION_RESOURCE_HINTS = {
     "Shutdown": "vm",
@@ -216,8 +230,10 @@ def price_resource(db: Session, sample: SignalSample) -> dict[str, Any]:
         }
 
     # Check if pricing is stale
-    is_stale = rate.stale_after and rate.stale_after < utcnow()
-    days_old = (utcnow() - rate.effective_at).days if rate.effective_at else 0
+    stale_after = _as_aware(rate.stale_after)
+    effective_at = _as_aware(rate.effective_at)
+    is_stale = stale_after is not None and stale_after < utcnow()
+    days_old = (utcnow() - effective_at).days if effective_at else 0
 
     cheaper = (
         db.query(ProductRate)

@@ -394,6 +394,109 @@ function ProviderSection({ provider, configs, loading, onRefresh }) {
   );
 }
 
+// ── Pipeline health ──────────────────────────────────────────────────────────
+// Recent background-job runs (cost/FOCUS ingestion across all providers).
+// This was previously only available in an unwired admin screen; folded in
+// here since it's operationally the same concern as "are my credentials working."
+
+const JOB_LABELS = {
+  cost_ingest:     'AWS Cost Ingest',
+  focus_transform: 'FOCUS Transform',
+  azure_ingest:    'Azure Cost Ingest',
+  gcp_ingest:      'GCP Cost Ingest',
+};
+
+function jobLabel(name) {
+  return JOB_LABELS[name] || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function JobStatusTag({ status }) {
+  if (status === 'success') return <Tag tone="positive">success</Tag>;
+  if (status === 'failed') return <Tag tone="negative">failed</Tag>;
+  if (status === 'running') return <Tag tone="info">running</Tag>;
+  return <Tag tone="neutral">{status || 'unknown'}</Tag>;
+}
+
+function PipelineHealth() {
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/jobs');
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const d = await r.json();
+      setJobs(d.jobs || []);
+      setError('');
+    } catch (e) {
+      setError(`Could not load job history (${e.message}).`);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  // Group by job_name, most recent 5 runs each.
+  const grouped = {};
+  for (const j of jobs) {
+    (grouped[j.job_name] ||= []).push(j);
+  }
+  const jobNames = Object.keys(grouped).sort();
+
+  return (
+    <div className="card" style={{ padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>Pipeline health</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+            Recent background-job runs for cost ingestion and FOCUS normalization, across all connected providers.
+          </div>
+        </div>
+        <Btn small onClick={load}>Refresh</Btn>
+      </div>
+
+      {error && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--negative, #d64545)' }}>{error}</div>}
+
+      {loading ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>Loading…</div>
+      ) : jobNames.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 0' }}>
+          No job runs yet — this fills in once a provider is connected and its first sync cycle runs.
+        </div>
+      ) : (
+        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+          {jobNames.map(name => (
+            <div key={name}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{jobLabel(name)}</div>
+              {grouped[name].slice(0, 5).map(j => {
+                const durationS = j.finished_at
+                  ? (new Date(j.finished_at) - new Date(j.started_at)) / 1000
+                  : null;
+                return (
+                  <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid var(--hairline)' }}>
+                    <JobStatusTag status={j.status} />
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'var(--muted)' }}>
+                      {new Date(j.started_at).toLocaleString()}
+                      {durationS != null && <> · {durationS.toFixed(1)}s</>}
+                      {j.records_processed != null && <> · {j.records_processed} records</>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function CredentialManager({ onNavigate }) {
   const [data, setData] = useState({ aws: [], azure: [], gcp: [] });
@@ -463,6 +566,8 @@ export default function CredentialManager({ onNavigate }) {
                 onRefresh={load}
               />
             ))}
+
+            <PipelineHealth />
 
           </div>
         </div>

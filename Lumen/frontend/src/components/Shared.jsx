@@ -61,6 +61,7 @@ const I = {
   link:     "M6 8 L8 6 M5.5 9.5 L4 11 A2 2 0 0 1 1 8 L3 6.5 M8.5 4.5 L10 3 A2 2 0 0 1 13 6 L11 7.5",
   pin:      "M7 1.5 V8 M4.5 8 H9.5 L9 11 H5 Z M7 11 V13",
   share:    "M3 7 L11 3 M3 7 L11 11",
+  cube:     "M7 1 L12 4 V10 L7 13 L2 10 V4 Z M7 1 V13 M2 4 L7 7 L12 4",
 };
 
 export const Ico = ({ name, size = 14, stroke = 1.5, fill }) => (
@@ -78,6 +79,7 @@ export function Sidebar({ active = 'overview', onNavigate }) {
     { id: 'budgets',         label: 'Budgets & Forecast', icon: 'budget' },
     { id: 'recommendations', label: 'Recommendations',    icon: 'bulb',   badge: 28 },
     { id: 'ai',              label: 'AI Cost',            icon: 'sparkles', badge: 'NEW' },
+    { id: 'databricks',      label: 'Databricks',         icon: 'cube',   badge: 'NEW' },
     { id: 'resources',       label: 'Resources',          icon: 'tree' },
   ];
   const lower = [

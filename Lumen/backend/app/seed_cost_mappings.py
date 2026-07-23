@@ -102,12 +102,17 @@ def seed_ai_service_classifications(db: Session, tenant_id: str = "tenant-demo")
     ]
 
     count = 0
+    # NOTE: AIServiceClassification's real unique constraint is
+    # (tenant_id, provider, service, sku_pattern) — it has no ai_subtype/
+    # model_variant/usage_unit/tier/cost_allocation_group columns. Map the
+    # tuple's positions onto the columns that do exist: ai_subtype -> ai_vendor,
+    # variant -> ai_model, usage_unit -> cost_unit, tier -> token_type.
     for provider, service, sku_pattern, ai_type, ai_subtype, variant, usage_unit, tier in classifications:
         existing = db.query(AIServiceClassification).filter(
             AIServiceClassification.tenant_id == tenant_id,
             AIServiceClassification.provider == provider,
+            AIServiceClassification.service == service,
             AIServiceClassification.sku_pattern == sku_pattern,
-            AIServiceClassification.tier == tier,
         ).one_or_none()
 
         if not existing:
@@ -115,14 +120,13 @@ def seed_ai_service_classifications(db: Session, tenant_id: str = "tenant-demo")
                 id=new_id(),
                 tenant_id=tenant_id,
                 provider=provider,
-                service_name=service,
+                service=service,
                 sku_pattern=sku_pattern,
                 ai_type=ai_type,
-                ai_subtype=ai_subtype,
-                model_variant=variant,
-                usage_unit=usage_unit,
-                tier=tier,
-                cost_allocation_group=f"{ai_type}/{ai_subtype}",
+                ai_vendor=ai_subtype,
+                ai_model=variant,
+                cost_unit=usage_unit,
+                token_type=tier,
                 created_at=utcnow(),
             )
             db.add(classification)
@@ -220,12 +224,13 @@ def seed_azure_ai_classifications(db: Session, tenant_id: str = "tenant-demo") -
     ]
 
     count = 0
+    # See note in seed_ai_service_classifications() re: column mapping.
     for provider, service, sku_pattern, ai_type, ai_subtype, variant, usage_unit, tier in classifications:
         existing = db.query(AIServiceClassification).filter(
             AIServiceClassification.tenant_id == tenant_id,
             AIServiceClassification.provider == provider,
+            AIServiceClassification.service == service,
             AIServiceClassification.sku_pattern == sku_pattern,
-            AIServiceClassification.tier == tier,
         ).one_or_none()
 
         if not existing:
@@ -233,14 +238,13 @@ def seed_azure_ai_classifications(db: Session, tenant_id: str = "tenant-demo") -
                 id=new_id(),
                 tenant_id=tenant_id,
                 provider=provider,
-                service_name=service,
+                service=service,
                 sku_pattern=sku_pattern,
                 ai_type=ai_type,
-                ai_subtype=ai_subtype,
-                model_variant=variant,
-                usage_unit=usage_unit,
-                tier=tier,
-                cost_allocation_group=f"{ai_type}/{ai_subtype}",
+                ai_vendor=ai_subtype,
+                ai_model=variant,
+                cost_unit=usage_unit,
+                token_type=tier,
                 created_at=utcnow(),
             )
             db.add(classification)
@@ -263,11 +267,13 @@ def seed_gcp_product_categories(db: Session, tenant_id: str = "tenant-demo") -> 
 
         # Storage
         ("GCP", "Cloud Storage", "^(Storage|Standard|Nearline|Coldline|Archive)", "Storage", "Storage", "gb_month"),
-        ("GCP", "Firestore", ".*Firestore.*", "Storage", "Firestore", "operations"),
         ("GCP", "Cloud Datastore", ".*Datastore.*", "Storage", "Datastore", "operations"),
-        ("GCP", "Cloud SQL", ".*Cloud SQL.*", "Storage", "Cloud SQL", "gb_month"),
 
         # Database
+        # Note: Cloud SQL and Firestore are categorized as Database only (not
+        # also Storage) — ProductCategory uniqueness is keyed on
+        # (tenant_id, provider, service_name, sku_pattern), so each sku_pattern
+        # can map to exactly one category.
         ("GCP", "Cloud SQL", ".*Cloud SQL.*", "Database", "Cloud SQL", "hour"),
         ("GCP", "Firestore", ".*Firestore.*", "Database", "Firestore", "operations"),
         ("GCP", "Spanner", ".*Spanner.*", "Database", "Spanner", "hour"),
@@ -347,12 +353,13 @@ def seed_gcp_ai_classifications(db: Session, tenant_id: str = "tenant-demo") -> 
     ]
 
     count = 0
+    # See note in seed_ai_service_classifications() re: column mapping.
     for provider, service, sku_pattern, ai_type, ai_subtype, variant, usage_unit, tier in classifications:
         existing = db.query(AIServiceClassification).filter(
             AIServiceClassification.tenant_id == tenant_id,
             AIServiceClassification.provider == provider,
+            AIServiceClassification.service == service,
             AIServiceClassification.sku_pattern == sku_pattern,
-            AIServiceClassification.tier == tier,
         ).one_or_none()
 
         if not existing:
@@ -360,14 +367,13 @@ def seed_gcp_ai_classifications(db: Session, tenant_id: str = "tenant-demo") -> 
                 id=new_id(),
                 tenant_id=tenant_id,
                 provider=provider,
-                service_name=service,
+                service=service,
                 sku_pattern=sku_pattern,
                 ai_type=ai_type,
-                ai_subtype=ai_subtype,
-                model_variant=variant,
-                usage_unit=usage_unit,
-                tier=tier,
-                cost_allocation_group=f"{ai_type}/{ai_subtype}",
+                ai_vendor=ai_subtype,
+                ai_model=variant,
+                cost_unit=usage_unit,
+                token_type=tier,
                 created_at=utcnow(),
             )
             db.add(classification)

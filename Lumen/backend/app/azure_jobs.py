@@ -21,7 +21,9 @@ from requests.auth import HTTPBasicAuth
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
+from .crypto import decrypt_secret
 from .database import SessionLocal
+from .jobs import tags_lookup, apply_tag_overrides
 from .models import (
     AzureCostIngestConfig, CostDetail, CostAggregation,
     FocusCost, JobRun, ProductCategory, utcnow
@@ -49,9 +51,12 @@ def get_azure_access_token(config: AzureCostIngestConfig) -> str:
         RuntimeError: If authentication fails
     """
     try:
-        # Decrypt client secret (in production, use Key Vault)
-        # For now, assumes secret is stored as plaintext (update in production)
-        client_secret = config.client_secret_encrypted
+        # client_secret lives in the encrypted `config` JSON blob (see crypto.py
+        # and routes_credentials.py's upsert_azure_credential) — never as a
+        # plaintext column.
+        client_secret = decrypt_secret((config.config or {}).get("encrypted_secret", ""))
+        if not client_secret:
+            raise RuntimeError("No client secret configured for this Azure connection")
 
         token_url = AZURE_AUTH_URL.format(tenant_id=config.azure_tenant_id)
 
@@ -172,11 +177,11 @@ async def _ingest_for_azure_config(db: Session, config: AzureCostIngestConfig) -
         }
 
         # Query cost data from the last sync date
-        timeframe_start = (config.last_synced_at or utcnow() - timedelta(days=1)).date()
+        timeframe_start = (config.last_sync_at or utcnow() - timedelta(days=1)).date()
         timeframe_end = utcnow().date()
 
         # Construct API URL for Cost Management API query
-        scope = config.export_scope or f"/subscriptions/{config.azure_subscription_id}"
+        scope = f"/subscriptions/{config.subscription_id}"
 
         query_body = {
             "type": "Usage",
@@ -230,7 +235,7 @@ async def _ingest_for_azure_config(db: Session, config: AzureCostIngestConfig) -
         records = _parse_azure_cost_response(db, cost_data, config)
 
         # Update last sync time
-        config.last_synced_at = utcnow()
+        config.last_sync_at = utcnow()
         config.test_status = "success"
         config.test_message = f"Synced {records['inserted'] + records['updated']} records"
         db.commit()
@@ -308,7 +313,7 @@ def _parse_azure_cost_response(
                     db.query(CostDetail)
                     .filter(
                         CostDetail.tenant_id == config.tenant_id,
-                        CostDetail.account_id == config.azure_subscription_id,
+                        CostDetail.account_id == config.subscription_id,
                         CostDetail.service == service_name,
                         CostDetail.resource_id == resource_group,
                         CostDetail.region == location,
@@ -326,30 +331,35 @@ def _parse_azure_cost_response(
 
                 if existing:
                     # Update existing record
-                    existing.cost_after_discount = cost_amount
-                    existing.usage_quantity = usage_qty
+                    existing.unblended_cost = float(cost_amount)
+                    existing.blended_cost = float(cost_amount)
+                    existing.amortised_cost = float(cost_amount)
+                    existing.list_cost = float(cost_amount)
+                    existing.usage_quantity = float(usage_qty)
                     existing.tags = tags
                     existing.parsed_at = utcnow()
                     db.add(existing)
                     updated_count += 1
                 else:
-                    # Create new record
+                    # Create new record. Azure Cost Management's query API returns
+                    # a single PreTaxCost figure (no separate blended/unblended/
+                    # amortized breakdown like AWS CUR), so all three cost columns
+                    # carry the same value here.
                     detail = CostDetail(
                         tenant_id=config.tenant_id,
-                        account_id=config.azure_subscription_id,
+                        account_id=config.subscription_id,
                         service=service_name,
                         sku=resource_type,
                         region=location,
                         usage_type=resource_type,
                         usage_start_date=usage_date,
                         usage_end_date=usage_date,
-                        usage_quantity=usage_qty,
-                        rate=Decimal(0),
+                        usage_quantity=float(usage_qty),
                         currency="USD",
-                        cost_before_discount=cost_amount,
-                        discount=Decimal(0),
-                        cost_after_discount=cost_amount,
-                        cost_with_tax=cost_amount,
+                        unblended_cost=float(cost_amount),
+                        blended_cost=float(cost_amount),
+                        amortised_cost=float(cost_amount),
+                        list_cost=float(cost_amount),
                         resource_id=resource_group,
                         tags=tags,
                         sourced_from="azure",
@@ -387,7 +397,7 @@ def _parse_azure_cost_response(
                         db.query(CostDetail)
                         .filter(
                             CostDetail.tenant_id == config.tenant_id,
-                            CostDetail.account_id == config.azure_subscription_id,
+                            CostDetail.account_id == config.subscription_id,
                             CostDetail.service == service_name,
                             CostDetail.region == location,
                             CostDetail.usage_start_date == usage_date,
@@ -404,20 +414,19 @@ def _parse_azure_cost_response(
 
                         detail = CostDetail(
                             tenant_id=config.tenant_id,
-                            account_id=config.azure_subscription_id,
+                            account_id=config.subscription_id,
                             service=service_name,
                             sku=resource_type,
                             region=location,
                             usage_type=resource_type,
                             usage_start_date=usage_date,
                             usage_end_date=usage_date,
-                            usage_quantity=Decimal(0),
-                            rate=Decimal(0),
+                            usage_quantity=0.0,
                             currency="USD",
-                            cost_before_discount=cost_amount,
-                            discount=Decimal(0),
-                            cost_after_discount=cost_amount,
-                            cost_with_tax=cost_amount,
+                            unblended_cost=float(cost_amount),
+                            blended_cost=float(cost_amount),
+                            amortised_cost=float(cost_amount),
+                            list_cost=float(cost_amount),
                             resource_id=resource_group,
                             tags={"ResourceType": resource_type, "Location": location},
                             sourced_from="azure",
@@ -480,45 +489,65 @@ async def run_azure_focus_transform(settings: Settings) -> dict[str, Any]:
                         service_category = category_mapping.category if category_mapping else "Other"
                         usage_unit = category_mapping.unit_type if category_mapping else "hour"
 
-                        # Check for existing FOCUS record
+                        tags = apply_tag_overrides(db, tenant_id, detail.resource_id, detail.tags or {})
+
+                        # Check for existing FOCUS record (same grain as AWS: one
+                        # row per sub-account + service + SKU + region + day)
                         existing = db.query(FocusCost).filter(
                             FocusCost.tenant_id == tenant_id,
-                            FocusCost.account_id == detail.account_id,
+                            FocusCost.sub_account_id == detail.account_id,
                             FocusCost.service_name == detail.service,
-                            FocusCost.region == detail.region,
+                            FocusCost.region_id == detail.region,
                             FocusCost.billing_period_start == detail.usage_start_date,
                         ).one_or_none()
 
-                        chargeback_entity = (
-                            detail.tags.get("CostCenter", "")
-                            or detail.tags.get("Team", "")
-                            or detail.tags.get("Environment", "default")
-                        )
+                        list_unit_price = (detail.unblended_cost / detail.usage_quantity) if detail.usage_quantity else 0.0
 
                         if existing:
-                            existing.billed_cost = detail.cost_after_discount
+                            existing.billed_cost = detail.blended_cost
+                            existing.effective_cost = detail.amortised_cost
+                            existing.list_cost = detail.list_cost
                             existing.usage_quantity = detail.usage_quantity
-                            existing.synth_date = utcnow()
+                            existing.list_unit_price = list_unit_price
+                            existing.tags = tags
+                            existing.x_team = tags_lookup(tags, "Team", "team_name")
+                            existing.x_cost_center = tags_lookup(tags, "CostCenter", "cost_center")
+                            existing.x_app_id = tags_lookup(tags, "AppId", "Application", "app")
+                            existing.x_environment = tags_lookup(tags, "Environment", "env", default="unknown")
+                            existing.transformed_at = utcnow()
                             db.add(existing)
                         else:
                             focus = FocusCost(
                                 tenant_id=tenant_id,
-                                account_id=detail.account_id,
+                                billing_account_id=detail.account_id,
+                                sub_account_id=detail.account_id,
                                 billing_period_start=detail.usage_start_date,
-                                invoice_issuer="azure",
+                                charge_period_start=f"{detail.usage_start_date}T00:00:00Z",
+                                charge_category="Usage",
+                                invoice_issuer_name="Microsoft Azure",
+                                provider_name="Azure",
+                                publisher_name="Microsoft",
                                 service_name=detail.service,
                                 service_category=service_category,
-                                sku=detail.sku,
-                                region=detail.region,
+                                sku_id=detail.sku,
+                                region_id=detail.region,
+                                region_name=detail.region,
                                 usage_quantity=detail.usage_quantity,
                                 usage_unit=usage_unit,
-                                unit_price=Decimal(0),
-                                billed_cost=detail.cost_after_discount,
+                                pricing_category="Standard",
+                                list_unit_price=list_unit_price,
+                                list_cost=detail.list_cost,
+                                billed_cost=detail.blended_cost,
+                                effective_cost=detail.amortised_cost,
                                 currency="USD",
-                                tags=detail.tags,
+                                tags=tags,
                                 resource_id=detail.resource_id,
-                                chargeback_entity=chargeback_entity,
-                                synth_date=utcnow(),
+                                x_team=tags_lookup(tags, "Team", "team_name"),
+                                x_cost_center=tags_lookup(tags, "CostCenter", "cost_center"),
+                                x_app_id=tags_lookup(tags, "AppId", "Application", "app"),
+                                x_environment=tags_lookup(tags, "Environment", "env", default="unknown"),
+                                source_detail_id=detail.id,
+                                transformed_at=utcnow(),
                             )
                             db.add(focus)
                         focus_count += 1

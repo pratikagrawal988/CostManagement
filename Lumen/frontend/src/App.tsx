@@ -7,9 +7,13 @@ import BudgetsScreen from "./pages/BudgetsScreen";
 import RecommendationsScreen from "./pages/RecommendationsScreen";
 import CredentialManager from "./pages/CredentialManager";
 import UserManagement from "./pages/UserManagement";
+import CostDashboardRouter from "./pages/CostDashboards";
+import Resources from "./pages/Resources";
+import TagPolicy from "./pages/TagPolicy";
+import DatabricksDashboard from "./pages/DatabricksDashboard";
 import "./styles/tokens.css";
 
-type ViewId = "overview" | "explorer" | "ai" | "anomalies" | "budgets" | "recommendations" | "resources" | "tags" | "teams" | "reports" | "settings";
+type ViewId = "overview" | "explorer" | "ai" | "databricks" | "anomalies" | "budgets" | "recommendations" | "resources" | "tags" | "teams" | "reports" | "settings";
 
 export default function AppRoot() {
   return <App user={null} onLogout={() => {}} />;
@@ -48,28 +52,26 @@ function App({ user, onLogout }: { user: any; onLogout: () => void }) {
         const Re = RecommendationsScreen as any;
         return <Re onNavigate={navigate} />;
       }
-      case "resources":
-        return (
-          <div className="lumen" style={{ height: "100vh" }}>
-            <WIPContent title="Resources" navigate={navigate} active="resources" />
-          </div>
-        );
-      case "tags":
-        return (
-          <div className="lumen" style={{ height: "100vh" }}>
-            <WIPContent title="Tag Policy" navigate={navigate} active="tags" />
-          </div>
-        );
+      case "databricks": {
+        const Db = DatabricksDashboard as any;
+        return <Db onNavigate={navigate} />;
+      }
+      case "resources": {
+        const Rs = Resources as any;
+        return <Rs onNavigate={navigate} />;
+      }
+      case "tags": {
+        const Tp = TagPolicy as any;
+        return <Tp onNavigate={navigate} />;
+      }
       case "teams": {
         const Um = UserManagement as any;
         return <Um onNavigate={navigate} />;
       }
-      case "reports":
-        return (
-          <div className="lumen" style={{ height: "100vh" }}>
-            <WIPContent title="Reports" navigate={navigate} active="reports" />
-          </div>
-        );
+      case "reports": {
+        const Rp = CostDashboardRouter as any;
+        return <Rp onNavigate={navigate} />;
+      }
       case "settings": {
         const Cm = CredentialManager as any;
         return <Cm onNavigate={navigate} />;

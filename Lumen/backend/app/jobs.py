@@ -22,7 +22,7 @@ from .evaluator import evaluate_hypothesis
 from .models import (
     Action, AuditEvent, CostDetail, CostIngestConfig, AzureCostIngestConfig, GcpCostIngestConfig, CostAggregation,
     FocusCost, Hypothesis, JobRun, Outcome, ProductCategory,
-    AIServiceClassification, utcnow
+    AIServiceClassification, ResourceTagOverride, utcnow, as_aware
 )
 from .settings import Settings
 
@@ -115,7 +115,7 @@ async def run_reconciler(settings: Settings) -> int:
                 )
                 if existing:
                     continue
-                if not action.applied_at or action.applied_at > utcnow() - timedelta(days=window):
+                if not action.applied_at or as_aware(action.applied_at) > utcnow() - timedelta(days=window):
                     status = "pending"
                     realized = 0.0
                     observed = 0.0
@@ -351,125 +351,119 @@ async def _ingest_for_config(db: Session, config: CostIngestConfig, settings: Se
         raise
 
 
+def _extract_cur_row(row: "pd.Series", df_columns) -> dict[str, Any] | None:
+    """
+    Extract one AWS CUR row into a dict matching CostDetail's real columns.
+
+    Returns None for invalid rows (missing account/service/date).
+    """
+    account_id = str(row.get("lineItem/UsageAccountId", "")).strip()
+    service_name = str(row.get("lineItem/ProductName", "")).strip()
+    sku = str(row.get("pricing/sku", "")).strip()
+    region = str(row.get("lineItem/AvailabilityZone", "")).strip()
+    region = region[:-1] if region and region[-1] in "abcde" else region  # strip AZ letter
+    usage_start = str(row.get("lineItem/UsageStartDate", "")).strip()[:10]  # YYYY-MM-DD
+
+    if not all([account_id, service_name, usage_start]):
+        return None
+
+    unblended = Decimal(str(row.get("lineItem/UnblendedCost", 0) or 0))
+    blended = Decimal(str(row.get("lineItem/BlendedCost", 0) or unblended))
+    amortised = Decimal(str(row.get("bill/AmortizedCost", 0) or blended))
+    usage_qty = Decimal(str(row.get("lineItem/UsageAmount", 0) or 0))
+
+    tags: dict[str, str] = {}
+    for col in df_columns:
+        if col.startswith("resourceTags/"):
+            tag_val = str(row.get(col, "")).strip()
+            if tag_val:
+                tags[col.replace("resourceTags/", "")] = tag_val
+
+    # Fields with no dedicated CostDetail column — kept for audit/troubleshooting.
+    raw = {
+        "service_code": str(row.get("lineItem/ProductCode", "")).strip(),
+        "operation": str(row.get("lineItem/Operation", "")).strip(),
+        "unblended_rate": str(row.get("lineItem/UnblendedRate", "") or ""),
+        "blended_rate": str(row.get("lineItem/BlendedRate", "") or ""),
+        "billing_entity": str(row.get("bill/BillingEntity", "")).strip(),
+        "bill_type": str(row.get("bill/BillType", "")).strip(),
+        "payer_account_id": str(row.get("bill/PayerAccountId", "")).strip(),
+        "invoice_id": str(row.get("bill/InvoiceId", "")).strip(),
+        "tax_amount": str(row.get("bill/TaxAmount", "") or ""),
+        "cur_date": str(row.get("bill/BillingPeriodStartDate", "")).strip()[:10],
+    }
+
+    return {
+        "account_id": account_id,
+        "service": service_name,
+        "sku": sku,
+        "region": region,
+        "resource_id": str(row.get("lineItem/ResourceId", "")).strip(),
+        "usage_start_date": usage_start,
+        "usage_end_date": str(row.get("lineItem/UsageEndDate", "")).strip()[:10],
+        "usage_quantity": float(usage_qty),
+        "usage_unit": str(row.get("lineItem/UsageType", "")).strip(),
+        "unblended_cost": float(unblended),
+        "blended_cost": float(blended),
+        "amortised_cost": float(amortised),
+        "list_cost": float(unblended),  # no separate public/on-demand rate ingested yet
+        "currency": str(row.get("pricing/currency", "USD")).strip() or "USD",
+        "tags": tags,
+        "raw": raw,
+    }
+
+
 def _upsert_cost_details(db: Session, df: pd.DataFrame, tenant_id: str) -> dict[str, int]:
     """
     Parse CUR DataFrame and upsert to CostDetail table.
     Uses unique constraint to detect duplicates (no full table replacements).
     """
-
-    # Map CUR column names to CostDetail fields
-    # AWS CUR standard columns: identity/TimeInterval, lineItem/*, blended/*, etc.
-    column_mapping = {
-        "lineItem/UsageStartDate": "usage_start_date",
-        "lineItem/UsageEndDate": "usage_end_date",
-        "lineItem/ProductCode": "service_code",
-        "lineItem/UsageType": "usage_type",
-        "lineItem/Operation": "operation",
-        "lineItem/AvailabilityZone": "availability_zone",
-        "lineItem/ResourceId": "resource_id",
-        "lineItem/UsageAmount": "usage_quantity",
-        "lineItem/UnblendedRate": "rate",
-        "lineItem/UnblendedCost": "cost_before_discount",
-        "discount/TotalDiscount": "discount",
-        "bill/BillingEntity": "billing_entity",
-        "bill/BillType": "bill_type",
-        "bill/PayerAccountId": "payer_account_id",
-        "lineItem/BlendedRate": "blended_rate",
-        "lineItem/BlendedCost": "cost_after_discount",
-        "bill/InvoiceId": "invoice_id",
-    }
-
     inserted_count = 0
     updated_count = 0
 
     for _, row in df.iterrows():
         try:
-            # Extract core fields - map from CUR columns
-            account_id = str(row.get("lineItem/UsageAccountId", "")).strip()
-            service_name = str(row.get("lineItem/ProductName", "")).strip()
-            sku = str(row.get("pricing/sku", "")).strip()
-            region = str(row.get("lineItem/AvailabilityZone", "")).strip()
-            region = region[:-1] if region and region[-1] in "abcde" else region  # Remove AZ letter if present
-            usage_start = str(row.get("lineItem/UsageStartDate", "")).strip()[:10]  # YYYY-MM-DD
-
-            # Skip invalid records
-            if not all([account_id, service_name, usage_start]):
-                logger.debug(f"Skipping invalid record: account={account_id}, service={service_name}, date={usage_start}")
+            fields = _extract_cur_row(row, df.columns)
+            if fields is None:
+                logger.debug("Skipping invalid CUR record (missing account/service/date)")
                 continue
 
-            # Extract cost fields with Decimal precision
-            cost_before = Decimal(str(row.get("lineItem/UnblendedCost", 0) or 0))
-            discount_amt = Decimal(str(row.get("discount/TotalDiscount", 0) or 0))
-            cost_after = Decimal(str(row.get("bill/AmortizedCost", 0) or cost_before - discount_amt))
-            usage_qty = Decimal(str(row.get("lineItem/UsageAmount", 0) or 0))
-            rate = Decimal(str(row.get("lineItem/UnblendedRate", 0) or 0))
-
-            # Extract tags (CUR stores as resourceTags/*)
-            tags = {}
-            for col in df.columns:
-                if col.startswith("resourceTags/"):
-                    tag_key = col.replace("resourceTags/", "")
-                    tag_val = str(row.get(col, "")).strip()
-                    if tag_val:
-                        tags[tag_key] = tag_val
-
-            # Check for duplicate (unique constraint)
             existing = (
                 db.query(CostDetail)
                 .filter(
                     CostDetail.tenant_id == tenant_id,
-                    CostDetail.account_id == account_id,
-                    CostDetail.service == service_name,
-                    CostDetail.sku == sku,
-                    CostDetail.region == region,
-                    CostDetail.usage_start_date == usage_start,
+                    CostDetail.account_id == fields["account_id"],
+                    CostDetail.service == fields["service"],
+                    CostDetail.sku == fields["sku"],
+                    CostDetail.region == fields["region"],
+                    CostDetail.usage_start_date == fields["usage_start_date"],
                 )
                 .one_or_none()
             )
 
             if existing:
-                # Update existing record
-                existing.cost_before_discount = cost_before
-                existing.discount = discount_amt
-                existing.cost_after_discount = cost_after
-                existing.usage_quantity = usage_qty
-                existing.rate = rate
-                existing.tags = tags
+                existing.unblended_cost = fields["unblended_cost"]
+                existing.blended_cost = fields["blended_cost"]
+                existing.amortised_cost = fields["amortised_cost"]
+                existing.list_cost = fields["list_cost"]
+                existing.usage_quantity = fields["usage_quantity"]
+                existing.tags = fields["tags"]
+                existing.raw = fields["raw"]
                 existing.parsed_at = utcnow()
                 db.add(existing)
                 updated_count += 1
             else:
-                # Create new record
                 detail = CostDetail(
                     tenant_id=tenant_id,
-                    account_id=account_id,
-                    service=service_name,
-                    service_code=str(row.get("lineItem/ProductCode", "")).strip(),
-                    sku=sku,
-                    region=region,
-                    usage_type=str(row.get("lineItem/UsageType", "")).strip(),
-                    usage_start_date=usage_start,
-                    usage_end_date=str(row.get("lineItem/UsageEndDate", "")).strip()[:10],
-                    usage_quantity=usage_qty,
-                    rate=rate,
-                    currency=str(row.get("pricing/currency", "USD")).strip(),
-                    cost_before_discount=cost_before,
-                    discount=discount_amt,
-                    cost_after_discount=cost_after,
-                    cost_with_tax=Decimal(str(row.get("bill/TaxAmount", 0) or 0)) + cost_after,
-                    cost_allocation_tags=tags,
-                    resource_id=str(row.get("lineItem/ResourceId", "")).strip(),
-                    tags=tags,
                     sourced_from="cur",
-                    cur_date=str(row.get("bill/BillingPeriodStartDate", "")).strip()[:10],
                     parsed_at=utcnow(),
+                    **fields,
                 )
                 db.add(detail)
                 inserted_count += 1
 
         except Exception as row_exc:
             logger.warning(f"Error processing CUR row: {str(row_exc)}")
-            # Continue to next row
             continue
 
     try:
@@ -480,74 +474,35 @@ def _upsert_cost_details(db: Session, df: pd.DataFrame, tenant_id: str) -> dict[
         # Retry with individual inserts to handle partials
         for _, row in df.iterrows():
             try:
-                account_id = str(row.get("lineItem/UsageAccountId", "")).strip()
-                service_name = str(row.get("lineItem/ProductName", "")).strip()
-                sku = str(row.get("pricing/sku", "")).strip()
-                region = str(row.get("lineItem/AvailabilityZone", "")).strip()
-                region = region[:-1] if region and region[-1] in "abcde" else region
-                usage_start = str(row.get("lineItem/UsageStartDate", "")).strip()[:10]
-
-                if not all([account_id, service_name, usage_start]):
+                fields = _extract_cur_row(row, df.columns)
+                if fields is None:
                     continue
 
                 existing = (
                     db.query(CostDetail)
                     .filter(
                         CostDetail.tenant_id == tenant_id,
-                        CostDetail.account_id == account_id,
-                        CostDetail.service == service_name,
-                        CostDetail.sku == sku,
-                        CostDetail.region == region,
-                        CostDetail.usage_start_date == usage_start,
+                        CostDetail.account_id == fields["account_id"],
+                        CostDetail.service == fields["service"],
+                        CostDetail.sku == fields["sku"],
+                        CostDetail.region == fields["region"],
+                        CostDetail.usage_start_date == fields["usage_start_date"],
                     )
                     .one_or_none()
                 )
 
                 if not existing:
-                    cost_before = Decimal(str(row.get("lineItem/UnblendedCost", 0) or 0))
-                    discount_amt = Decimal(str(row.get("discount/TotalDiscount", 0) or 0))
-                    cost_after = Decimal(str(row.get("bill/AmortizedCost", 0) or cost_before - discount_amt))
-                    usage_qty = Decimal(str(row.get("lineItem/UsageAmount", 0) or 0))
-                    rate = Decimal(str(row.get("lineItem/UnblendedRate", 0) or 0))
-
-                    tags = {}
-                    for col in df.columns:
-                        if col.startswith("resourceTags/"):
-                            tag_key = col.replace("resourceTags/", "")
-                            tag_val = str(row.get(col, "")).strip()
-                            if tag_val:
-                                tags[tag_key] = tag_val
-
                     detail = CostDetail(
                         tenant_id=tenant_id,
-                        account_id=account_id,
-                        service=service_name,
-                        service_code=str(row.get("lineItem/ProductCode", "")).strip(),
-                        sku=sku,
-                        region=region,
-                        usage_type=str(row.get("lineItem/UsageType", "")).strip(),
-                        usage_start_date=usage_start,
-                        usage_end_date=str(row.get("lineItem/UsageEndDate", "")).strip()[:10],
-                        usage_quantity=usage_qty,
-                        rate=rate,
-                        currency=str(row.get("pricing/currency", "USD")).strip(),
-                        cost_before_discount=cost_before,
-                        discount=discount_amt,
-                        cost_after_discount=cost_after,
-                        cost_with_tax=Decimal(str(row.get("bill/TaxAmount", 0) or 0)) + cost_after,
-                        cost_allocation_tags=tags,
-                        resource_id=str(row.get("lineItem/ResourceId", "")).strip(),
-                        tags=tags,
                         sourced_from="cur",
-                        cur_date=str(row.get("bill/BillingPeriodStartDate", "")).strip()[:10],
                         parsed_at=utcnow(),
+                        **fields,
                     )
                     db.add(detail)
                     inserted_count += 1
                 db.commit()
             except IntegrityError:
                 db.rollback()
-                # Skip this duplicate
                 pass
 
     return {"inserted": inserted_count, "updated": updated_count}
@@ -574,6 +529,9 @@ async def run_focus_transform(settings: Settings) -> dict[str, Any]:
         tenants = db.query(func.distinct(CostDetail.tenant_id)).filter(
             CostDetail.sourced_from == "cur"
         ).all()
+        # All tenants with ANY cost data (AWS, Azure, or GCP) — used below so the
+        # aggregation rebuild covers tenants that only have Azure/GCP connected.
+        all_source_tenants = db.query(func.distinct(CostDetail.tenant_id)).all()
 
         total_focus_records = 0
         total_aggregations = 0
@@ -597,43 +555,62 @@ async def run_focus_transform(settings: Settings) -> dict[str, Any]:
                     try:
                         focus_record = _transform_to_focus(db, detail, tenant_id)
                         if focus_record:
-                            # Upsert FOCUS record
+                            # Upsert FOCUS record (dedup on the natural grain of one
+                            # CostDetail row: sub-account + service + SKU + region + day)
                             existing = db.query(FocusCost).filter(
                                 FocusCost.tenant_id == tenant_id,
-                                FocusCost.account_id == detail.account_id,
+                                FocusCost.sub_account_id == focus_record["sub_account_id"],
                                 FocusCost.service_name == detail.service,
-                                FocusCost.sku == detail.sku,
-                                FocusCost.region == detail.region,
+                                FocusCost.sku_id == detail.sku,
+                                FocusCost.region_id == detail.region,
                                 FocusCost.billing_period_start == detail.usage_start_date,
                             ).one_or_none()
 
                             if existing:
                                 existing.billed_cost = focus_record["billed_cost"]
+                                existing.effective_cost = focus_record["effective_cost"]
+                                existing.list_cost = focus_record["list_cost"]
                                 existing.usage_quantity = focus_record["usage_quantity"]
-                                existing.unit_price = focus_record["unit_price"]
+                                existing.list_unit_price = focus_record["list_unit_price"]
                                 existing.tags = focus_record["tags"]
-                                existing.synth_date = utcnow()
+                                existing.x_team = focus_record["x_team"]
+                                existing.x_cost_center = focus_record["x_cost_center"]
+                                existing.x_app_id = focus_record["x_app_id"]
+                                existing.x_environment = focus_record["x_environment"]
+                                existing.transformed_at = utcnow()
                                 db.add(existing)
                             else:
                                 focus = FocusCost(
                                     tenant_id=tenant_id,
-                                    account_id=detail.account_id,
+                                    billing_account_id=focus_record["billing_account_id"],
+                                    sub_account_id=focus_record["sub_account_id"],
                                     billing_period_start=detail.usage_start_date,
-                                    invoice_issuer="aws",
+                                    charge_period_start=f"{detail.usage_start_date}T00:00:00Z",
+                                    charge_category="Usage",
+                                    invoice_issuer_name="Amazon Web Services",
+                                    provider_name="AWS",
+                                    publisher_name="Amazon",
                                     service_name=focus_record["service_name"],
                                     service_category=focus_record["service_category"],
-                                    sku=detail.sku,
-                                    region=detail.region,
+                                    sku_id=detail.sku,
+                                    region_id=detail.region,
+                                    region_name=detail.region,
                                     usage_quantity=focus_record["usage_quantity"],
                                     usage_unit=focus_record["usage_unit"],
-                                    unit_price=focus_record["unit_price"],
+                                    pricing_category="Standard",
+                                    list_unit_price=focus_record["list_unit_price"],
+                                    list_cost=focus_record["list_cost"],
                                     billed_cost=focus_record["billed_cost"],
+                                    effective_cost=focus_record["effective_cost"],
                                     currency="USD",
                                     tags=focus_record["tags"],
                                     resource_id=detail.resource_id,
-                                    cost_category=focus_record["cost_category"],
-                                    chargeback_entity=focus_record["chargeback_entity"],
-                                    synth_date=utcnow(),
+                                    x_team=focus_record["x_team"],
+                                    x_cost_center=focus_record["x_cost_center"],
+                                    x_app_id=focus_record["x_app_id"],
+                                    x_environment=focus_record["x_environment"],
+                                    source_detail_id=detail.id,
+                                    transformed_at=utcnow(),
                                 )
                                 db.add(focus)
                             focus_count += 1
@@ -654,10 +631,33 @@ async def run_focus_transform(settings: Settings) -> dict[str, Any]:
                 db.rollback()
                 errors.append(f"Tenant {tenant_id}: {str(tenant_exc)}")
 
+        # Azure and GCP CostDetail -> FocusCost transforms aren't on their own
+        # schedule; run them here so all three providers stay in sync on the
+        # same hourly cadence.
+        try:
+            from .azure_jobs import run_azure_focus_transform
+            from .gcp_jobs import run_gcp_focus_transform
+            azure_result = await run_azure_focus_transform(settings)
+            total_focus_records += azure_result.get("total_focus_records", 0)
+            if azure_result.get("errors"):
+                errors.extend(azure_result["errors"])
+        except Exception as azure_exc:
+            logger.warning("Azure FOCUS transform failed: %s", azure_exc)
+            errors.append(f"azure_focus_transform: {azure_exc}")
+
+        try:
+            gcp_result = await run_gcp_focus_transform(settings)
+            total_focus_records += gcp_result.get("total_focus_records", 0)
+            if gcp_result.get("errors"):
+                errors.extend(gcp_result["errors"])
+        except Exception as gcp_exc:
+            logger.warning("GCP FOCUS transform failed: %s", gcp_exc)
+            errors.append(f"gcp_focus_transform: {gcp_exc}")
+
         # Rebuild aggregations from all focus_cost rows (incl. CSP mock + AI data)
         try:
             from .focus_aggregator import build_aggregations_from_focus
-            for (tenant_id,) in tenants:
+            for (tenant_id,) in all_source_tenants:
                 agg_result = build_aggregations_from_focus(db, tenant_id)
                 total_aggregations += agg_result.get("total", 0)
         except Exception as agg_exc:
@@ -666,7 +666,7 @@ async def run_focus_transform(settings: Settings) -> dict[str, Any]:
         details = {
             "total_focus_records": total_focus_records,
             "total_aggregations": total_aggregations,
-            "tenants_processed": len(tenants),
+            "tenants_processed": len(all_source_tenants),
             "errors": errors if errors else None,
         }
 
@@ -680,6 +680,49 @@ async def run_focus_transform(settings: Settings) -> dict[str, Any]:
         raise
     finally:
         db.close()
+
+
+def tags_lookup(tags: dict, *keys: str, default: str = "") -> str:
+    """
+    Case/separator-insensitive tag lookup: tries each key as-is, then
+    lower/upper/title case, then with '-'/'_'/' ' interchanged.
+
+    A stopgap until the tag normalization service (routes_tags.py) resolves
+    aliases properly — keeps chargeback fields populated even when a tag key
+    is spelled inconsistently (Team vs team vs TEAM vs cost-center vs
+    CostCenter), which is the exact problem tag management is meant to solve.
+    """
+    if not tags:
+        return default
+    normalized = {str(k).strip().lower().replace("-", "_").replace(" ", "_"): v for k, v in tags.items()}
+    for key in keys:
+        variant = key.strip().lower().replace("-", "_").replace(" ", "_")
+        if variant in normalized and normalized[variant]:
+            return str(normalized[variant])
+    return default
+
+
+def apply_tag_overrides(db: Session, tenant_id: str, resource_id: str, tags: dict) -> dict:
+    """
+    Merge approved tag-management overrides (predicted values, normalized
+    keys/values, manual edits — see routes_tags.py) on top of a resource's
+    raw tags before they're written into FocusCost. Ensures a prediction or
+    normalization approved via the Tag Policy UI is reflected in every
+    subsequent ingestion cycle for that resource, not just the one-time
+    bulk-rewrite performed at approval time.
+    """
+    if not resource_id:
+        return tags
+    overrides = db.query(ResourceTagOverride).filter(
+        ResourceTagOverride.tenant_id == tenant_id,
+        ResourceTagOverride.resource_id == resource_id,
+    ).all()
+    if not overrides:
+        return tags
+    merged = dict(tags or {})
+    for o in overrides:
+        merged[o.tag_key] = o.tag_value
+    return merged
 
 
 def _transform_to_focus(db: Session, detail: CostDetail, tenant_id: str) -> dict | None:
@@ -703,34 +746,35 @@ def _transform_to_focus(db: Session, detail: CostDetail, tenant_id: str) -> dict
         ai_mapping = db.query(AIServiceClassification).filter(
             AIServiceClassification.tenant_id == tenant_id,
             AIServiceClassification.provider == "AWS",
-            AIServiceClassification.service_name == detail.service,
+            AIServiceClassification.service == detail.service,
         ).first()
 
-        # Determine cost allocation (chargeback entity) based on tags
-        chargeback_entity = (
-            detail.tags.get("CostCenter", "")
-            or detail.tags.get("Team", "")
-            or detail.tags.get("Environment", "default")
-        )
+        tags = apply_tag_overrides(db, tenant_id, detail.resource_id, detail.tags or {})
+        payer_account_id = (detail.raw or {}).get("payer_account_id", "")
 
-        cost_category = (
-            detail.tags.get("CostCategory", "")
-            or (service_category if service_category != "Other" else "")
-        )
+        billed_cost = detail.blended_cost
+        effective_cost = detail.amortised_cost
+        list_unit_price = (detail.unblended_cost / detail.usage_quantity) if detail.usage_quantity else 0.0
 
         return {
+            "billing_account_id": payer_account_id or detail.account_id,
+            "sub_account_id": detail.account_id,
             "service_name": detail.service,
             "service_category": service_category,
             "usage_quantity": detail.usage_quantity,
             "usage_unit": usage_unit,
-            "unit_price": detail.rate,
-            "billed_cost": detail.cost_after_discount,
-            "tags": detail.tags,
-            "cost_category": cost_category,
-            "chargeback_entity": chargeback_entity,
+            "list_unit_price": list_unit_price,
+            "list_cost": detail.list_cost,
+            "billed_cost": billed_cost,
+            "effective_cost": effective_cost,
+            "tags": tags,
+            "x_team":        tags_lookup(tags, "Team", "team_name"),
+            "x_cost_center": tags_lookup(tags, "CostCenter", "cost_center"),
+            "x_app_id":      tags_lookup(tags, "AppId", "Application", "app"),
+            "x_environment": tags_lookup(tags, "Environment", "env", default="unknown"),
             "ai_type": ai_mapping.ai_type if ai_mapping else None,
-            "ai_subtype": ai_mapping.ai_subtype if ai_mapping else None,
-            "model_variant": ai_mapping.model_variant if ai_mapping else None,
+            "ai_subtype": ai_mapping.ai_vendor if ai_mapping else None,
+            "model_variant": ai_mapping.ai_model if ai_mapping else None,
         }
 
     except Exception as exc:
@@ -769,22 +813,26 @@ def _create_cost_aggregations(db: Session, tenant_id: str, details: list[CostDet
             # Lookup AI type
             ai_mapping = db.query(AIServiceClassification).filter(
                 AIServiceClassification.tenant_id == tenant_id,
-                AIServiceClassification.service_name == detail.service,
+                AIServiceClassification.service == detail.service,
             ).first()
             ai_type = ai_mapping.ai_type if ai_mapping else ""
-            ai_subtype = ai_mapping.ai_subtype if ai_mapping else ""
+            ai_subtype = ai_mapping.ai_vendor if ai_mapping else ""
+            team = tags_lookup(detail.tags or {}, "Team", "team_name")
+            environment = tags_lookup(detail.tags or {}, "Environment", "env", default="unknown")
 
             key = (detail.account_id, detail.service, category, subcategory, detail.region, ai_type, ai_subtype)
             if key not in groups:
                 groups[key] = {
-                    "total_cost": Decimal(0),
-                    "total_usage": Decimal(0),
+                    "total_cost": 0.0,
+                    "total_usage": 0.0,
                     "unit_count": 0,
                     "resource_count": 0,
+                    "team": team,
+                    "environment": environment,
                 }
 
-            groups[key]["total_cost"] += detail.cost_after_discount
-            groups[key]["total_usage"] += detail.usage_quantity
+            groups[key]["total_cost"] += float(detail.blended_cost)
+            groups[key]["total_usage"] += float(detail.usage_quantity)
             groups[key]["unit_count"] += 1
             groups[key]["resource_count"] += 1
 
@@ -804,12 +852,15 @@ def _create_cost_aggregations(db: Session, tenant_id: str, details: list[CostDet
                 existing_agg.total_usage = agg_data["total_usage"]
                 existing_agg.unit_count = agg_data["unit_count"]
                 existing_agg.resource_count = agg_data["resource_count"]
-                existing_agg.aggregated_at = utcnow()
+                existing_agg.team = agg_data["team"]
+                existing_agg.environment = agg_data["environment"]
+                existing_agg.updated_at = utcnow()
                 db.add(existing_agg)
             else:
                 agg = CostAggregation(
                     tenant_id=tenant_id,
                     account_id=account_id,
+                    provider="AWS",
                     date=date,
                     service=service,
                     category=category,
@@ -817,11 +868,13 @@ def _create_cost_aggregations(db: Session, tenant_id: str, details: list[CostDet
                     ai_type=ai_type,
                     ai_subtype=ai_subtype,
                     region=region,
+                    team=agg_data["team"],
+                    environment=agg_data["environment"],
                     total_cost=agg_data["total_cost"],
+                    effective_cost=agg_data["total_cost"],
                     total_usage=agg_data["total_usage"],
                     unit_count=agg_data["unit_count"],
                     resource_count=agg_data["resource_count"],
-                    aggregated_at=utcnow(),
                 )
                 db.add(agg)
 

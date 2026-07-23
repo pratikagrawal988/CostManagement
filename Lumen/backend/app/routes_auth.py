@@ -28,7 +28,7 @@ from .auth import (
     REFRESH_TTL,
 )
 from .database import get_db
-from .models import Tenant, utcnow, new_id
+from .models import Tenant, utcnow, new_id, as_aware
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -199,7 +199,7 @@ def refresh_token(req: RefreshRequest, db: Session = Depends(get_db)):
 
     if not rt or rt.revoked:
         raise HTTPException(status_code=401, detail="Invalid or revoked refresh token")
-    if rt.expires_at < datetime.now(timezone.utc):
+    if as_aware(rt.expires_at) < datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Refresh token expired")
 
     user = db.query(User).filter_by(id=rt.user_id).first()
